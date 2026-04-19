@@ -1,31 +1,6 @@
-/*
- * The MIT License (MIT)
- *
- * Copyright (c) 2019 Ha Thach (tinyusb.org)
- *
- * Permission is hereby granted, free of charge, to any person obtaining a copy
- * of this software and associated documentation files (the "Software"), to deal
- * in the Software without restriction, including without limitation the rights
- * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
- * copies of the Software, and to permit persons to whom the Software is
- * furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice shall be included in
- * all copies or substantial portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
- * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
- * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
- * THE SOFTWARE.
- *
- */
-
-#include "bsp/board_api.h"
 #include "tusb.h"
 #include "usb_descriptors.h"
+#include "esp_mac.h"
 
 /* A combination of interfaces must have a unique product id, since PC will save device driver after the first plug.
  * Same VID/PID with different interface e.g MSC (first), then CDC (later) will possibly cause system error on PC.
@@ -53,7 +28,7 @@ static tusb_desc_device_t const desc_device =
     .bDeviceProtocol    = MISC_PROTOCOL_IAD,
     .bMaxPacketSize0    = CFG_TUD_ENDPOINT0_SIZE,
 
-    .idVendor           = 0x1209,
+    .idVendor           = 0xcafe,
     .idProduct          = USB_PID,
     .bcdDevice          = 0x0101,
 
@@ -84,44 +59,14 @@ enum
 
 #define CONFIG_TOTAL_LEN    (TUD_CONFIG_DESC_LEN + TUD_CDC_DESC_LEN + TUD_VENDOR_DESC_LEN)
 
-#if CFG_TUSB_MCU == OPT_MCU_LPC175X_6X || CFG_TUSB_MCU == OPT_MCU_LPC177X_8X || CFG_TUSB_MCU == OPT_MCU_LPC40XX
-  // LPC 17xx and 40xx endpoint type (bulk/interrupt/iso) are fixed by its number
-  // 0 control, 1 In, 2 Bulk, 3 Iso, 4 In etc ...
-  #define EPNUM_CDC_NOTIF  0x81
-  #define EPNUM_CDC_OUT    0x02
-  #define EPNUM_CDC_IN     0x82
 
-  #define EPNUM_VENDOR_OUT 0x05
-  #define EPNUM_VENDOR_IN  0x85
-
-#elif CFG_TUSB_MCU == OPT_MCU_CXD56
-  // CXD56 USB driver has fixed endpoint type (bulk/interrupt/iso) and direction (IN/OUT) by its number
-  // 0 control (IN/OUT), 1 Bulk (IN), 2 Bulk (OUT), 3 In (IN), 4 Bulk (IN), 5 Bulk (OUT), 6 In (IN)
-  #define EPNUM_CDC_NOTIF   0x83
-  #define EPNUM_CDC_OUT     0x02
-  #define EPNUM_CDC_IN      0x81
-
-  #define EPNUM_VENDOR_OUT  0x05
-  #define EPNUM_VENDOR_IN   0x84
-
-#elif defined(TUD_ENDPOINT_ONE_DIRECTION_ONLY)
-  // MCUs that don't support a same endpoint number with different direction IN and OUT defined in tusb_mcu.h
-  //    e.g EP1 OUT & EP1 IN cannot exist together
-  #define EPNUM_CDC_NOTIF   0x81
-  #define EPNUM_CDC_OUT     0x02
-  #define EPNUM_CDC_IN      0x83
-
-  #define EPNUM_VENDOR_OUT  0x04
-  #define EPNUM_VENDOR_IN   0x85
-
-#else
   #define EPNUM_CDC_NOTIF   0x81
   #define EPNUM_CDC_OUT     0x02
   #define EPNUM_CDC_IN      0x82
 
   #define EPNUM_VENDOR_OUT  0x03
   #define EPNUM_VENDOR_IN   0x83
-#endif
+
 
 uint8_t const desc_configuration[] =
 {
@@ -237,6 +182,27 @@ static char const *string_desc_arr[] =
   "TinyUSB CDC",                 // 4: CDC Interface
   "TinyUSB WebUSB"               // 5: Vendor Interface
 };
+
+size_t board_usb_get_serial(uint16_t desc_str1[], size_t max_chars) {
+    uint8_t mac[6];
+    esp_efuse_mac_get_default(mac);
+
+    size_t const serial_chars = 12;
+    if (max_chars < serial_chars) {
+        return 0;
+    }
+
+    static const char nibble_to_hex[16] = {
+        '0', '1', '2', '3', '4', '5', '6', '7',
+        '8', '9', 'A', 'B', 'C', 'D', 'E', 'F'};
+
+    for (size_t i = 0; i < 6; i++) {
+        desc_str1[i * 2] = nibble_to_hex[(mac[i] >> 4) & 0x0F];
+        desc_str1[i * 2 + 1] = nibble_to_hex[mac[i] & 0x0F];
+    }
+
+    return serial_chars;
+}
 
 static uint16_t _desc_str[32 + 1];
 

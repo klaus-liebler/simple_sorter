@@ -2,29 +2,40 @@
 #include <stdio.h>
 #include <string.h>
 
-#include "bsp/board_api.h"
+#include "esp_mac.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "rgbled.hh"
+#include "esp_rom_gpio.h"
+
+#include "hal/gpio_ll.h"
+
+#include "driver/gpio.h"
+#include "driver/uart.h"
+#include "esp_private/usb_phy.h"
+
+#include "tusb_config.h"
 #include "tusb.h"
 #include "usb_descriptors.h"
 
-//--------------------------------------------------------------------+
-// MACRO CONSTANT TYPEDEF PROTYPES
-//--------------------------------------------------------------------+
+
+constexpr gpio_num_t BUTTON_PIN{GPIO_NUM_0};
+constexpr int BUTTON_STATE_ACTIVE{0};
+constexpr gpio_num_t LED_PIN{GPIO_NUM_21};
 
 /* Blink pattern
  * - 250 ms  : device not mounted
  * - 1000 ms : device mounted
  * - 2500 ms : device is suspended
  */
-enum  {
-  BLINK_NOT_MOUNTED = 250,
-  BLINK_MOUNTED     = 1000,
-  BLINK_SUSPENDED   = 2500,
+RGBLED::BlinkPattern NOT_MOUNTED(CRGB::Red, 250, CRGB::Black, 250);
+RGBLED::BlinkPattern MOUNTED(CRGB::Green, 1000, CRGB::Black, 1000);
+RGBLED::BlinkPattern SUSPENDED(CRGB::Blue, 250, CRGB::Black, 2250);
+RGBLED::MultipleFlashesPattern USB_INIT_FAILED(CRGB::Red, 2);
 
-  BLINK_ALWAYS_ON   = UINT32_MAX,
-  BLINK_ALWAYS_OFF  = 0
-};
 
-static uint32_t blink_interval_ms = BLINK_NOT_MOUNTED;
+static RGBLED::M<1, RGBLED::DeviceType::WS2812> s_board_led;
+static usb_phy_handle_t phy_hdl;
 
 #define URL  "example.tinyusb.org/webusb-serial/index.html"
 
@@ -37,13 +48,64 @@ const tusb_desc_webusb_url_t desc_url = {
 
 static bool web_serial_connected = false;
 
-//------------- prototypes -------------//
-void led_blinking_task(void);
-void cdc_task(void);
 
-/*------------- MAIN -------------*/
+bool board_button_pressed(void) {
+  return gpio_get_level(BUTTON_PIN) == BUTTON_STATE_ACTIVE;
+}
+
+// Get characters from UART
+int board_uart_read(uint8_t* buf, int len) {
+  for (int i=0; i<len; i++) {
+    int c = getchar();
+    if (c == EOF) {
+      return i;
+    }
+    buf[i] = (uint8_t) c;
+  }
+  return len;
+}
+
+// Send characters to UART
+int board_uart_write(void const* buf, int len) {
+  for (int i = 0; i < len; i++) {
+    putchar(((char*) buf)[i]);
+  }
+  return len;
+}
+
+int board_getchar(void) {
+  return getchar();
+}
+
+int board_putchar(int c) {
+  return putchar(c);
+}
+
 extern "C" void app_main(void) {
-  board_init();
+  s_board_led.Begin(SPI2_HOST, GPIO_NUM_21);
+  
+  esp_rom_gpio_pad_select_gpio(BUTTON_PIN);
+  gpio_set_direction(BUTTON_PIN, GPIO_MODE_INPUT);
+  gpio_set_pull_mode(BUTTON_PIN, BUTTON_STATE_ACTIVE ? GPIO_PULLDOWN_ONLY : GPIO_PULLUP_ONLY);
+
+  usb_phy_config_t phy_conf = {};
+  phy_conf.controller = USB_PHY_CTRL_OTG;
+  phy_conf.target = USB_PHY_TARGET_INT;
+  phy_conf.otg_mode = USB_OTG_MODE_DEVICE;
+  // https://github.com/hathach/tinyusb/issues/2943#issuecomment-2601888322
+  // Set speed to undefined (auto-detect) to avoid timing/racing issue with S3 hosts such as macOS.
+  phy_conf.otg_speed = USB_PHY_SPEED_UNDEFINED;
+
+  esp_err_t const err = usb_new_phy(&phy_conf, &phy_hdl);
+  if (err != ESP_OK) {
+    printf("usb_new_phy failed: %s\r\n", esp_err_to_name(err));
+    phy_hdl = nullptr;
+    s_board_led.AnimatePixel(0, &USB_INIT_FAILED);
+    while (1) {
+      s_board_led.Refresh();
+      vTaskDelay(pdMS_TO_TICKS(20));
+    }
+  }
 
   // init device stack on configured roothub port
   tusb_rhport_init_t dev_init = {
@@ -52,12 +114,10 @@ extern "C" void app_main(void) {
   };
   tusb_init(BOARD_TUD_RHPORT, &dev_init);
 
-  board_init_after_tusb();
-
   while (1) {
     tud_task(); // tinyusb device task
     tud_cdc_write_flush();
-    led_blinking_task();
+    s_board_led.Refresh();
   }
 }
 
@@ -80,26 +140,26 @@ static void echo_all(const uint8_t buf[], uint32_t count) {
 //--------------------------------------------------------------------+
 
 // Invoked when device is mounted
-void tud_mount_cb(void) {
-  blink_interval_ms = BLINK_MOUNTED;
+extern "C" void tud_mount_cb(void) {
+  s_board_led.AnimatePixel(0, &MOUNTED);
 }
 
 // Invoked when device is unmounted
-void tud_umount_cb(void) {
-  blink_interval_ms = BLINK_NOT_MOUNTED;
+extern "C" void tud_umount_cb(void) {
+  s_board_led.AnimatePixel(0, &NOT_MOUNTED);
 }
 
 // Invoked when usb bus is suspended
 // remote_wakeup_en : if host allow us  to perform remote wakeup
 // Within 7ms, device must draw an average of current less than 2.5 mA from bus
-void tud_suspend_cb(bool remote_wakeup_en) {
+extern "C" void tud_suspend_cb(bool remote_wakeup_en) {
   (void)remote_wakeup_en;
-  blink_interval_ms = BLINK_SUSPENDED;
+  s_board_led.AnimatePixel(0, &SUSPENDED);
 }
 
 // Invoked when usb bus is resumed
-void tud_resume_cb(void) {
-  blink_interval_ms = tud_mounted() ? BLINK_MOUNTED : BLINK_NOT_MOUNTED;
+extern "C" void tud_resume_cb(void) {
+  s_board_led.AnimatePixel(0, tud_mounted() ? &MOUNTED : &NOT_MOUNTED);
 }
 
 //--------------------------------------------------------------------+
@@ -109,7 +169,7 @@ void tud_resume_cb(void) {
 // Invoked when a control transfer occurred on an interface of this class
 // Driver response accordingly to the request and the transfer stage (setup/data/ack)
 // return false to stall control endpoint (e.g unsupported request)
-bool tud_vendor_control_xfer_cb(uint8_t rhport, uint8_t stage, tusb_control_request_t const* request) {
+extern "C" bool tud_vendor_control_xfer_cb(uint8_t rhport, uint8_t stage, tusb_control_request_t const* request) {
   // nothing to with DATA & ACK stage
   if (stage != CONTROL_STAGE_SETUP) {
     return true;
@@ -145,13 +205,11 @@ bool tud_vendor_control_xfer_cb(uint8_t rhport, uint8_t stage, tusb_control_requ
 
         // Always lit LED if connected
         if (web_serial_connected) {
-          board_led_write(true);
-          blink_interval_ms = BLINK_ALWAYS_ON;
-
+          s_board_led.SetPixel(0, CRGB::Green);
           tud_vendor_write_str("\r\nWebUSB interface connected\r\n");
           tud_vendor_write_flush();
         } else {
-          blink_interval_ms = BLINK_MOUNTED;
+          s_board_led.AnimatePixel(0, &MOUNTED);
         }
 
         // response with status OK
@@ -166,7 +224,7 @@ bool tud_vendor_control_xfer_cb(uint8_t rhport, uint8_t stage, tusb_control_requ
   return false;
 }
 
-void tud_vendor_rx_cb(uint8_t idx, const uint8_t *buffer, uint32_t bufsize) {
+extern "C" void tud_vendor_rx_cb(uint8_t idx, const uint8_t *buffer, uint16_t bufsize) {
   (void)idx;
   (void)buffer;
   (void)bufsize;
@@ -183,7 +241,7 @@ void tud_vendor_rx_cb(uint8_t idx, const uint8_t *buffer, uint32_t bufsize) {
 //--------------------------------------------------------------------+
 
 // Invoked when cdc when line state changed e.g connected/disconnected
-void tud_cdc_line_state_cb(uint8_t itf, bool dtr, bool rts) {
+extern "C" void tud_cdc_line_state_cb(uint8_t itf, bool dtr, bool rts) {
   (void)itf;
 
   // connected
@@ -194,28 +252,11 @@ void tud_cdc_line_state_cb(uint8_t itf, bool dtr, bool rts) {
 }
 
 // Invoked when CDC interface received data from host
-void tud_cdc_rx_cb(uint8_t idx) {
+extern "C" void tud_cdc_rx_cb(uint8_t idx) {
   (void)idx;
   while (tud_cdc_available()) {
     uint8_t        buf[64];
     const uint32_t count = tud_cdc_read(buf, sizeof(buf));
     echo_all(buf, count); // echo back to both web serial and cdc
   }
-}
-
-//--------------------------------------------------------------------+
-// BLINKING TASK
-//--------------------------------------------------------------------+
-void led_blinking_task(void) {
-  static uint32_t start_ms = 0;
-  static bool led_state = false;
-
-  // Blink every interval ms
-  if (board_millis() - start_ms < blink_interval_ms) {
-    return; // not enough time
-  }
-  start_ms += blink_interval_ms;
-
-  board_led_write(led_state);
-  led_state = 1 - led_state; // toggle
 }
