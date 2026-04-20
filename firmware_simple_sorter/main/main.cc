@@ -1,8 +1,17 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
+#include <errno.h>
+#include <stdarg.h>
+#include <fcntl.h>
+#include <sys/types.h>
+#include <unistd.h>
 
+#include "sdkconfig.h"
+#include "esp_log.h"
 #include "esp_mac.h"
+#include "esp_system.h"
+#include "esp_vfs.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "rgbled.hh"
@@ -37,52 +46,186 @@ RGBLED::MultipleFlashesPattern USB_INIT_FAILED(CRGB::Red, 2);
 static RGBLED::M<1, RGBLED::DeviceType::WS2812> s_board_led;
 static usb_phy_handle_t phy_hdl;
 
+static constexpr char MONITOR_LOG_TAG[] = "monitor";
+
 #define URL  "example.tinyusb.org/webusb-serial/index.html"
 
-const tusb_desc_webusb_url_t desc_url = {
-  .bLength         = 3 + sizeof(URL) - 1,
-  .bDescriptorType = 3, // WEBUSB URL type
-  .bScheme         = 1, // 0: http, 1: https
-  .url             = URL
+static constexpr uint32_t BINARY_MSG_SIZE = 64;
+static constexpr uint16_t BINARY_PAYLOAD_SIZE = 60;
+
+static bool board_button_pressed(void);
+
+struct webusb_url_desc_t {
+  uint8_t bLength;
+  uint8_t bDescriptorType;
+  uint8_t bScheme;
+  char url[sizeof(URL)];
 };
 
-static bool web_serial_connected = false;
+static const webusb_url_desc_t desc_url = {
+  .bLength = static_cast<uint8_t>(3 + sizeof(URL) - 1),
+  .bDescriptorType = 3, // WEBUSB URL type
+  .bScheme = 1, // 0: http, 1: https
+  .url = URL
+};
+
+class ISendBackInterface {
+public:
+  virtual ~ISendBackInterface() = default;
+  virtual bool Send(uint16_t name_space, uint16_t message_id, const uint8_t* payload) = 0;
+};
+
+class INamespaceListener {
+public:
+  virtual ~INamespaceListener() = default;
+  virtual void Handle(ISendBackInterface& context, uint16_t message_id, const uint8_t* payload) = 0;
+};
+
+struct NamespaceListenerEntry {
+  uint16_t name_space;
+  INamespaceListener* listener;
+};
+
+static constexpr size_t MAX_NAMESPACE_LISTENERS = 8;
+static NamespaceListenerEntry s_namespace_listeners[MAX_NAMESPACE_LISTENERS] = {};
+
+static uint16_t read_u16_le(const uint8_t* data) {
+  return static_cast<uint16_t>(data[0] | (static_cast<uint16_t>(data[1]) << 8));
+}
+
+static void write_u16_le(uint8_t* data, uint16_t value) {
+  data[0] = static_cast<uint8_t>(value & 0xFF);
+  data[1] = static_cast<uint8_t>((value >> 8) & 0xFF);
+}
+
+class VendorSendBack final : public ISendBackInterface {
+public:
+  bool Send(uint16_t name_space, uint16_t message_id, const uint8_t* payload) override {
+    if (payload == nullptr) {
+      return false;
+    }
+
+    uint8_t frame[BINARY_MSG_SIZE] = {};
+    write_u16_le(frame + 0, name_space);
+    write_u16_le(frame + 2, message_id);
+    memcpy(frame + 4, payload, BINARY_PAYLOAD_SIZE);
+
+    if (tud_vendor_write_available() < BINARY_MSG_SIZE) {
+      return false;
+    }
+
+    uint32_t const written = tud_vendor_write(frame, BINARY_MSG_SIZE);
+    tud_vendor_write_flush();
+    return written == BINARY_MSG_SIZE;
+  }
+};
+
+class EchoNamespaceListener final : public INamespaceListener {
+public:
+  void Handle(ISendBackInterface& context, uint16_t message_id, const uint8_t* payload) override {
+    (void)context.Send(kNamespaceEcho, message_id, payload);
+  }
+
+  static constexpr uint16_t kNamespaceEcho = 0x0001;
+};
+
+static EchoNamespaceListener s_echo_listener;
+
+class RGBMessageProcessor final : public INamespaceListener {
+public:
+  void Handle(ISendBackInterface& context, uint16_t message_id, const uint8_t* payload) override {
+    (void)context;
+    (void)message_id;
+
+    if (payload == nullptr) {
+      return;
+    }
+
+    CRGB const color(payload[0], payload[1], payload[2]);
+    s_board_led.SetPixel(0, color);
+  }
+
+  static constexpr uint16_t kNamespaceRgb = 0x0002;
+};
+
+static RGBMessageProcessor s_rgb_message_processor;
+
+static bool register_namespace_listener(uint16_t name_space, INamespaceListener* listener) {
+  if (listener == nullptr) {
+    return false;
+  }
+
+  for (size_t i = 0; i < MAX_NAMESPACE_LISTENERS; i++) {
+    if (s_namespace_listeners[i].listener != nullptr && s_namespace_listeners[i].name_space == name_space) {
+      s_namespace_listeners[i].listener = listener;
+      return true;
+    }
+  }
+
+  for (size_t i = 0; i < MAX_NAMESPACE_LISTENERS; i++) {
+    if (s_namespace_listeners[i].listener == nullptr) {
+      s_namespace_listeners[i].name_space = name_space;
+      s_namespace_listeners[i].listener = listener;
+      return true;
+    }
+  }
+
+  return false;
+}
+
+static INamespaceListener* find_namespace_listener(uint16_t name_space) {
+  for (size_t i = 0; i < MAX_NAMESPACE_LISTENERS; i++) {
+    if (s_namespace_listeners[i].listener != nullptr && s_namespace_listeners[i].name_space == name_space) {
+      return s_namespace_listeners[i].listener;
+    }
+  }
+
+  return nullptr;
+}
+
+
+
+
+static void monitoring_task(void* context) {
+  (void)context;
+
+  while (true) {
+    ESP_LOGI(
+      MONITOR_LOG_TAG,
+      "uptime_ms=%lu mounted=%d suspended=%d cdc_connected=%d cdc_rx=%u cdc_tx_free=%u button=%d heap=%lu",
+      static_cast<unsigned long>(xTaskGetTickCount() * portTICK_PERIOD_MS),
+      tud_mounted() ? 1 : 0,
+      tud_suspended() ? 1 : 0,
+      tud_cdc_connected() ? 1 : 0,
+      static_cast<unsigned>(tud_cdc_available()),
+      static_cast<unsigned>(tud_cdc_write_available()),
+      board_button_pressed() ? 1 : 0,
+      static_cast<unsigned long>(esp_get_free_heap_size()));
+    printf(
+      "uptime_ms=%lu mounted=%d suspended=%d cdc_connected=%d cdc_rx=%u cdc_tx_free=%u button=%d heap=%lu\r\n",
+      static_cast<unsigned long>(xTaskGetTickCount() * portTICK_PERIOD_MS),
+      tud_mounted() ? 1 : 0,
+      tud_suspended() ? 1 : 0,
+      tud_cdc_connected() ? 1 : 0,
+      static_cast<unsigned>(tud_cdc_available()),
+      static_cast<unsigned>(tud_cdc_write_available()),
+      board_button_pressed() ? 1 : 0,
+      static_cast<unsigned long>(esp_get_free_heap_size()));
+    vTaskDelay(pdMS_TO_TICKS(1000));
+  }
+}
 
 
 bool board_button_pressed(void) {
   return gpio_get_level(BUTTON_PIN) == BUTTON_STATE_ACTIVE;
 }
 
-// Get characters from UART
-int board_uart_read(uint8_t* buf, int len) {
-  for (int i=0; i<len; i++) {
-    int c = getchar();
-    if (c == EOF) {
-      return i;
-    }
-    buf[i] = (uint8_t) c;
-  }
-  return len;
-}
-
-// Send characters to UART
-int board_uart_write(void const* buf, int len) {
-  for (int i = 0; i < len; i++) {
-    putchar(((char*) buf)[i]);
-  }
-  return len;
-}
-
-int board_getchar(void) {
-  return getchar();
-}
-
-int board_putchar(int c) {
-  return putchar(c);
-}
 
 extern "C" void app_main(void) {
+  
   s_board_led.Begin(SPI2_HOST, GPIO_NUM_21);
+  register_namespace_listener(EchoNamespaceListener::kNamespaceEcho, &s_echo_listener);
+  register_namespace_listener(RGBMessageProcessor::kNamespaceRgb, &s_rgb_message_processor);
   
   esp_rom_gpio_pad_select_gpio(BUTTON_PIN);
   gpio_set_direction(BUTTON_PIN, GPIO_MODE_INPUT);
@@ -114,6 +257,8 @@ extern "C" void app_main(void) {
   };
   tusb_init(BOARD_TUD_RHPORT, &dev_init);
 
+  xTaskCreate(monitoring_task, "monitoring", 4096, nullptr, tskIDLE_PRIORITY + 1, nullptr);
+
   while (1) {
     tud_task(); // tinyusb device task
     tud_cdc_write_flush();
@@ -121,18 +266,18 @@ extern "C" void app_main(void) {
   }
 }
 
-// send characters to both CDC and WebUSB
-static void echo_all(const uint8_t buf[], uint32_t count) {
-  // echo to web serial
-  if (web_serial_connected) {
-    tud_vendor_write(buf, count);
-    tud_vendor_write_flush();
+static void process_vendor_binary_message(const uint8_t msg[BINARY_MSG_SIZE]) {
+  uint16_t const name_space = read_u16_le(msg + 0);
+  uint16_t const message_id = read_u16_le(msg + 2);
+  uint8_t const* payload = msg + 4;
+
+  INamespaceListener* listener = find_namespace_listener(name_space);
+  if (listener == nullptr) {
+    return;
   }
 
-  // echo to cdc
-  if (tud_cdc_connected()) {
-    tud_cdc_write(buf, count);
-  }
+  VendorSendBack context;
+  listener->Handle(context, message_id, payload);
 }
 
 //--------------------------------------------------------------------+
@@ -198,25 +343,6 @@ extern "C" bool tud_vendor_control_xfer_cb(uint8_t rhport, uint8_t stage, tusb_c
       }
       break;
 
-    case TUSB_REQ_TYPE_CLASS:
-      if (request->bRequest == 0x22) {
-        // Webserial simulate the CDC_REQUEST_SET_CONTROL_LINE_STATE (0x22) to connect and disconnect.
-        web_serial_connected = (request->wValue != 0);
-
-        // Always lit LED if connected
-        if (web_serial_connected) {
-          s_board_led.SetPixel(0, CRGB::Green);
-          tud_vendor_write_str("\r\nWebUSB interface connected\r\n");
-          tud_vendor_write_flush();
-        } else {
-          s_board_led.AnimatePixel(0, &MOUNTED);
-        }
-
-        // response with status OK
-        return tud_control_status(rhport, request);
-      }
-      break;
-
     default: break;
   }
 
@@ -229,10 +355,12 @@ extern "C" void tud_vendor_rx_cb(uint8_t idx, const uint8_t *buffer, uint16_t bu
   (void)buffer;
   (void)bufsize;
 
-  while (tud_vendor_available()) {
-    uint8_t        buf[64];
-    const uint32_t count = tud_vendor_read(buf, sizeof(buf));
-    echo_all(buf, count);
+  while (tud_vendor_available() >= BINARY_MSG_SIZE) {
+    uint8_t msg[BINARY_MSG_SIZE];
+    uint32_t const count = tud_vendor_read(msg, BINARY_MSG_SIZE);
+    if (count == BINARY_MSG_SIZE) {
+      process_vendor_binary_message(msg);
+    }
   }
 }
 
@@ -240,14 +368,14 @@ extern "C" void tud_vendor_rx_cb(uint8_t idx, const uint8_t *buffer, uint16_t bu
 // USB CDC
 //--------------------------------------------------------------------+
 
-// Invoked when cdc when line state changed e.g connected/disconnected
+// Invoked when cdc line state changed e.g connected/disconnected
 extern "C" void tud_cdc_line_state_cb(uint8_t itf, bool dtr, bool rts) {
   (void)itf;
 
   // connected
   if (dtr && rts) {
-    // print initial message when connected
-    tud_cdc_write_str("\r\nTinyUSB WebUSB device example\r\n");
+    tud_cdc_write_str("\r\nKlaus Lieblers WebUSB device example\r\n");
+    tud_cdc_write_flush();
   }
 }
 
@@ -255,8 +383,9 @@ extern "C" void tud_cdc_line_state_cb(uint8_t itf, bool dtr, bool rts) {
 extern "C" void tud_cdc_rx_cb(uint8_t idx) {
   (void)idx;
   while (tud_cdc_available()) {
-    uint8_t        buf[64];
-    const uint32_t count = tud_cdc_read(buf, sizeof(buf));
-    echo_all(buf, count); // echo back to both web serial and cdc
+    uint8_t buf[64];
+    uint32_t const count = tud_cdc_read(buf, sizeof(buf));
+    tud_cdc_write(buf, count);
   }
+  tud_cdc_write_flush();
 }

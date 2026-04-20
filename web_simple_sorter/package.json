@@ -1,0 +1,24 @@
+{
+  "name": "web_simple_sorter",
+  "version": "1.0.0",
+  "description": "WebUI for Simple Sorter",
+  "license": "MIT",
+  "author": "Klaus Liebler",
+  "type": "module",
+  "main": "index.html",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "dependencies": {
+    "lit": "^3.3.2"
+  },
+  "devDependencies": {
+    "@types/node": "^25.6.0",
+    "typescript": "^6.0.3",
+    "vite": "^8.0.8"
+  }
+}
