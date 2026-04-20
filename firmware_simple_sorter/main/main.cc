@@ -45,6 +45,7 @@ RGBLED::MultipleFlashesPattern USB_INIT_FAILED(CRGB::Red, 2);
 
 static RGBLED::M<1, RGBLED::DeviceType::WS2812> s_board_led;
 static usb_phy_handle_t phy_hdl;
+static int (*s_previous_log_vprintf)(const char*, va_list) = nullptr;
 
 static constexpr char MONITOR_LOG_TAG[] = "monitor";
 
@@ -52,8 +53,80 @@ static constexpr char MONITOR_LOG_TAG[] = "monitor";
 
 static constexpr uint32_t BINARY_MSG_SIZE = 64;
 static constexpr uint16_t BINARY_PAYLOAD_SIZE = 60;
+static constexpr TickType_t CDC_LOG_WRITE_TIMEOUT_TICKS = pdMS_TO_TICKS(20);
 
 static bool board_button_pressed(void);
+
+static void cdc_write_with_timeout(const char* data, size_t len, TickType_t timeout_ticks) {
+  if (data == nullptr || len == 0) {
+    return;
+  }
+
+  TickType_t const start = xTaskGetTickCount();
+  while (len > 0) {
+    uint32_t const avail = tud_cdc_write_available();
+    if (avail == 0) {
+      if ((xTaskGetTickCount() - start) >= timeout_ticks) {
+        break;
+      }
+      vTaskDelay(1);
+      continue;
+    }
+
+    size_t chunk_len = len;
+    if (chunk_len > static_cast<size_t>(avail)) {
+      chunk_len = static_cast<size_t>(avail);
+    }
+
+    uint32_t const written = tud_cdc_write(data, chunk_len);
+    if (written == 0) {
+      if ((xTaskGetTickCount() - start) >= timeout_ticks) {
+        break;
+      }
+      vTaskDelay(1);
+      continue;
+    }
+
+    data += written;
+    len -= written;
+  }
+}
+
+static int cdc_log_vprintf(const char* fmt, va_list args) {
+  va_list args_for_prev;
+  va_list args_for_cdc;
+  va_copy(args_for_prev, args);
+  va_copy(args_for_cdc, args);
+
+  int printed = 0;
+  if (s_previous_log_vprintf != nullptr) {
+    printed = s_previous_log_vprintf(fmt, args_for_prev);
+  }
+  va_end(args_for_prev);
+
+  if (xPortInIsrContext()) {
+    va_end(args_for_cdc);
+    return printed;
+  }
+
+  char line[258];
+  int const line_len = vsnprintf(line, sizeof(line) - 2, fmt, args_for_cdc);
+  va_end(args_for_cdc);
+
+  if (line_len <= 0 || !tud_cdc_connected()) {
+    return printed;
+  }
+
+  size_t to_send = static_cast<size_t>(line_len);
+  if (to_send > (sizeof(line) - 2)) {
+    to_send = sizeof(line) - 2;
+  }
+
+  cdc_write_with_timeout(line, to_send, CDC_LOG_WRITE_TIMEOUT_TICKS);
+  tud_cdc_write_flush();
+
+  return printed;
+}
 
 struct webusb_url_desc_t {
   uint8_t bLength;
@@ -256,6 +329,8 @@ extern "C" void app_main(void) {
     .speed = TUSB_SPEED_AUTO
   };
   tusb_init(BOARD_TUD_RHPORT, &dev_init);
+
+  s_previous_log_vprintf = esp_log_set_vprintf(cdc_log_vprintf);
 
   xTaskCreate(monitoring_task, "monitoring", 4096, nullptr, tskIDLE_PRIORITY + 1, nullptr);
 
