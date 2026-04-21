@@ -56,7 +56,7 @@
 #endif
 
 #ifndef CFG_TUSB_OS
-#define CFG_TUSB_OS           OPT_OS_FREERTOS
+#define CFG_TUSB_OS           OPT_OS_NONE
 #endif
 
 #ifndef CFG_TUSB_DEBUG
@@ -100,8 +100,8 @@
 #define CFG_TUD_VENDOR            1
 
 // CDC FIFO size of TX and RX
-#define CFG_TUD_CDC_RX_BUFSIZE    512
-#define CFG_TUD_CDC_TX_BUFSIZE    512
+#define CFG_TUD_CDC_RX_BUFSIZE    (TUD_OPT_HIGH_SPEED ? 512 : 64)
+#define CFG_TUD_CDC_TX_BUFSIZE    (TUD_OPT_HIGH_SPEED ? 512 : 64)
 
 // Vendor FIFO size of TX and RX
 // If zero: vendor endpoints will not be buffered

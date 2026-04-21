@@ -25,12 +25,16 @@
 
 #include "tusb_config.h"
 #include "tusb.h"
+#include "listener/echo_namespace_listener.hh"
+#include "listener/rgb_message_processor.hh"
+#include "listener/servo_message_processor.hh"
 #include "usb_descriptors.h"
 
 
 constexpr gpio_num_t BUTTON_PIN{GPIO_NUM_0};
 constexpr int BUTTON_STATE_ACTIVE{0};
 constexpr gpio_num_t LED_PIN{GPIO_NUM_21};
+constexpr gpio_num_t SERVO_PIN{GPIO_NUM_6};
 
 /* Blink pattern
  * - 250 ms  : device not mounted
@@ -40,7 +44,7 @@ constexpr gpio_num_t LED_PIN{GPIO_NUM_21};
 RGBLED::BlinkPattern NOT_MOUNTED(CRGB::Red, 250, CRGB::Black, 250);
 RGBLED::BlinkPattern MOUNTED(CRGB::Green, 1000, CRGB::Black, 1000);
 RGBLED::BlinkPattern SUSPENDED(CRGB::Blue, 250, CRGB::Black, 2250);
-RGBLED::MultipleFlashesPattern USB_INIT_FAILED(CRGB::Red, 2);
+//RGBLED::MultipleFlashesPattern USB_INIT_FAILED(CRGB::Red, 2);
 
 
 static RGBLED::M<1, RGBLED::DeviceType::WS2812> s_board_led;
@@ -51,8 +55,6 @@ static constexpr char MONITOR_LOG_TAG[] = "monitor";
 
 #define URL  "example.tinyusb.org/webusb-serial/index.html"
 
-static constexpr uint32_t BINARY_MSG_SIZE = 64;
-static constexpr uint16_t BINARY_PAYLOAD_SIZE = 60;
 static constexpr TickType_t CDC_LOG_WRITE_TIMEOUT_TICKS = pdMS_TO_TICKS(20);
 
 static bool board_button_pressed(void);
@@ -142,17 +144,23 @@ static const webusb_url_desc_t desc_url = {
   .url = URL
 };
 
-class ISendBackInterface {
-public:
-  virtual ~ISendBackInterface() = default;
-  virtual bool Send(uint16_t name_space, uint16_t message_id, const uint8_t* payload) = 0;
-};
+static listener::EchoNamespaceListener s_echo_listener;
+static listener::RGBMessageProcessor s_rgb_message_processor(s_board_led);
+static listener::ServoMessageProcessor s_servo_message_processor(SERVO_PIN);
 
-class INamespaceListener {
-public:
-  virtual ~INamespaceListener() = default;
-  virtual void Handle(ISendBackInterface& context, uint16_t message_id, const uint8_t* payload) = 0;
-};
+namespace listener {
+
+static constexpr uint32_t BINARY_MSG_SIZE = 64;
+static constexpr uint16_t BINARY_PAYLOAD_SIZE = 60;
+
+inline uint16_t ReadU16Le(const uint8_t* data) {
+  return static_cast<uint16_t>(data[0] | (static_cast<uint16_t>(data[1]) << 8));
+}
+
+inline void WriteU16Le(uint8_t* data, uint16_t value) {
+  data[0] = static_cast<uint8_t>(value & 0xFF);
+  data[1] = static_cast<uint8_t>((value >> 8) & 0xFF);
+}
 
 struct NamespaceListenerEntry {
   uint16_t name_space;
@@ -162,68 +170,7 @@ struct NamespaceListenerEntry {
 static constexpr size_t MAX_NAMESPACE_LISTENERS = 8;
 static NamespaceListenerEntry s_namespace_listeners[MAX_NAMESPACE_LISTENERS] = {};
 
-static uint16_t read_u16_le(const uint8_t* data) {
-  return static_cast<uint16_t>(data[0] | (static_cast<uint16_t>(data[1]) << 8));
-}
-
-static void write_u16_le(uint8_t* data, uint16_t value) {
-  data[0] = static_cast<uint8_t>(value & 0xFF);
-  data[1] = static_cast<uint8_t>((value >> 8) & 0xFF);
-}
-
-class VendorSendBack final : public ISendBackInterface {
-public:
-  bool Send(uint16_t name_space, uint16_t message_id, const uint8_t* payload) override {
-    if (payload == nullptr) {
-      return false;
-    }
-
-    uint8_t frame[BINARY_MSG_SIZE] = {};
-    write_u16_le(frame + 0, name_space);
-    write_u16_le(frame + 2, message_id);
-    memcpy(frame + 4, payload, BINARY_PAYLOAD_SIZE);
-
-    if (tud_vendor_write_available() < BINARY_MSG_SIZE) {
-      return false;
-    }
-
-    uint32_t const written = tud_vendor_write(frame, BINARY_MSG_SIZE);
-    tud_vendor_write_flush();
-    return written == BINARY_MSG_SIZE;
-  }
-};
-
-class EchoNamespaceListener final : public INamespaceListener {
-public:
-  void Handle(ISendBackInterface& context, uint16_t message_id, const uint8_t* payload) override {
-    (void)context.Send(kNamespaceEcho, message_id, payload);
-  }
-
-  static constexpr uint16_t kNamespaceEcho = 0x0001;
-};
-
-static EchoNamespaceListener s_echo_listener;
-
-class RGBMessageProcessor final : public INamespaceListener {
-public:
-  void Handle(ISendBackInterface& context, uint16_t message_id, const uint8_t* payload) override {
-    (void)context;
-    (void)message_id;
-
-    if (payload == nullptr) {
-      return;
-    }
-
-    CRGB const color(payload[0], payload[1], payload[2]);
-    s_board_led.SetPixel(0, color);
-  }
-
-  static constexpr uint16_t kNamespaceRgb = 0x0002;
-};
-
-static RGBMessageProcessor s_rgb_message_processor;
-
-static bool register_namespace_listener(uint16_t name_space, INamespaceListener* listener) {
+bool RegisterNamespaceListener(uint16_t name_space, INamespaceListener* listener) {
   if (listener == nullptr) {
     return false;
   }
@@ -246,7 +193,7 @@ static bool register_namespace_listener(uint16_t name_space, INamespaceListener*
   return false;
 }
 
-static INamespaceListener* find_namespace_listener(uint16_t name_space) {
+INamespaceListener* FindNamespaceListener(uint16_t name_space) {
   for (size_t i = 0; i < MAX_NAMESPACE_LISTENERS; i++) {
     if (s_namespace_listeners[i].listener != nullptr && s_namespace_listeners[i].name_space == name_space) {
       return s_namespace_listeners[i].listener;
@@ -255,6 +202,30 @@ static INamespaceListener* find_namespace_listener(uint16_t name_space) {
 
   return nullptr;
 }
+
+class VendorSendBack final : public ISendBackInterface {
+public:
+  bool Send(uint16_t name_space, uint16_t message_id, const uint8_t* payload) override {
+    if (payload == nullptr) {
+      return false;
+    }
+
+    uint8_t frame[BINARY_MSG_SIZE] = {};
+    WriteU16Le(frame + 0, name_space);
+    WriteU16Le(frame + 2, message_id);
+    memcpy(frame + 4, payload, BINARY_PAYLOAD_SIZE);
+
+    if (tud_vendor_write_available() < BINARY_MSG_SIZE) {
+      return false;
+    }
+
+    uint32_t const written = tud_vendor_write(frame, BINARY_MSG_SIZE);
+    tud_vendor_write_flush();
+    return written == BINARY_MSG_SIZE;
+  }
+};
+
+}  // namespace listener
 
 
 
@@ -297,8 +268,10 @@ bool board_button_pressed(void) {
 extern "C" void app_main(void) {
   
   s_board_led.Begin(SPI2_HOST, GPIO_NUM_21);
-  register_namespace_listener(EchoNamespaceListener::kNamespaceEcho, &s_echo_listener);
-  register_namespace_listener(RGBMessageProcessor::kNamespaceRgb, &s_rgb_message_processor);
+  (void)s_servo_message_processor.Begin();
+  listener::RegisterNamespaceListener(listener::EchoNamespaceListener::kNamespaceEcho, &s_echo_listener);
+  listener::RegisterNamespaceListener(listener::RGBMessageProcessor::kNamespaceRgb, &s_rgb_message_processor);
+  listener::RegisterNamespaceListener(listener::ServoMessageProcessor::kNamespaceServo, &s_servo_message_processor);
   
   esp_rom_gpio_pad_select_gpio(BUTTON_PIN);
   gpio_set_direction(BUTTON_PIN, GPIO_MODE_INPUT);
@@ -316,7 +289,7 @@ extern "C" void app_main(void) {
   if (err != ESP_OK) {
     printf("usb_new_phy failed: %s\r\n", esp_err_to_name(err));
     phy_hdl = nullptr;
-    s_board_led.AnimatePixel(0, &USB_INIT_FAILED);
+    //s_board_led.AnimatePixel(0, &USB_INIT_FAILED);
     while (1) {
       s_board_led.Refresh();
       vTaskDelay(pdMS_TO_TICKS(20));
@@ -341,18 +314,18 @@ extern "C" void app_main(void) {
   }
 }
 
-static void process_vendor_binary_message(const uint8_t msg[BINARY_MSG_SIZE]) {
-  uint16_t const name_space = read_u16_le(msg + 0);
-  uint16_t const message_id = read_u16_le(msg + 2);
+static void process_vendor_binary_message(const uint8_t msg[listener::BINARY_MSG_SIZE]) {
+  uint16_t const name_space = listener::ReadU16Le(msg + 0);
+  uint16_t const message_id = listener::ReadU16Le(msg + 2);
   uint8_t const* payload = msg + 4;
 
-  INamespaceListener* listener = find_namespace_listener(name_space);
-  if (listener == nullptr) {
+  listener::INamespaceListener* message_listener = listener::FindNamespaceListener(name_space);
+  if (message_listener == nullptr) {
     return;
   }
 
-  VendorSendBack context;
-  listener->Handle(context, message_id, payload);
+  listener::VendorSendBack context;
+  message_listener->Handle(context, message_id, payload);
 }
 
 //--------------------------------------------------------------------+
@@ -430,10 +403,10 @@ extern "C" void tud_vendor_rx_cb(uint8_t idx, const uint8_t *buffer, uint16_t bu
   (void)buffer;
   (void)bufsize;
 
-  while (tud_vendor_available() >= BINARY_MSG_SIZE) {
-    uint8_t msg[BINARY_MSG_SIZE];
-    uint32_t const count = tud_vendor_read(msg, BINARY_MSG_SIZE);
-    if (count == BINARY_MSG_SIZE) {
+  while (tud_vendor_available() >= listener::BINARY_MSG_SIZE) {
+    uint8_t msg[listener::BINARY_MSG_SIZE];
+    uint32_t const count = tud_vendor_read(msg, listener::BINARY_MSG_SIZE);
+    if (count == listener::BINARY_MSG_SIZE) {
       process_vendor_binary_message(msg);
     }
   }

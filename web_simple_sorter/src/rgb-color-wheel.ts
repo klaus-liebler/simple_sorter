@@ -254,3 +254,9 @@ export class RgbColorWheel extends LitElement {
 		`;
 	}
 }
+
+declare global {
+	interface HTMLElementTagNameMap {
+		"rgb-color-wheel": RgbColorWheel;
+	}
+}

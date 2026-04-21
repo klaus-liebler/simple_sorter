@@ -13,5 +13,5 @@
     "--query-driver=**",
     "--compile-commands-dir=c:\\repos\\simple_sorter\\firmware_simple_sorter\\build"
   ],
-  "idf.portWin": "COM5"
+  "idf.portWin": "COM7"
 }
