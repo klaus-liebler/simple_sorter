@@ -53,7 +53,7 @@ static int (*s_previous_log_vprintf)(const char*, va_list) = nullptr;
 
 static constexpr char MONITOR_LOG_TAG[] = "monitor";
 
-#define URL  "example.tinyusb.org/webusb-serial/index.html"
+#define URL  "liebler.iui.hs-osnabrueck.de/rgb/"
 
 static constexpr TickType_t CDC_LOG_WRITE_TIMEOUT_TICKS = pdMS_TO_TICKS(20);
 
