@@ -1,87 +1,15 @@
-import { LitElement, html, css } from "lit";
+import { LitElement, html } from "lit";
 import { customElement, property } from "lit/decorators.js";
+import type { IMessageSender } from "./app.js";
 
 @customElement("rgb-color-wheel")
 export class RgbColorWheel extends LitElement {
-	static styles = [
-		css`
-			:host {
-				display: block;
-			}
-			.container {
-				display: flex;
-				flex-direction: column;
-				align-items: center;
-				gap: 20px;
-			}
-			.wheel {
-				position: relative;
-				width: 280px;
-				height: 280px;
-			}
-			canvas {
-				display: block;
-				cursor: crosshair;
-				border-radius: 50%;
-				box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
-			}
-			.color-preview {
-				display: flex;
-				gap: 20px;
-				align-items: center;
-				width: 100%;
-				justify-content: center;
-			}
-			.preview-box {
-				width: 80px;
-				height: 80px;
-				border-radius: 8px;
-				box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
-				border: 2px solid #e0e0e0;
-			}
-			.color-values {
-				display: flex;
-				flex-direction: column;
-				gap: 8px;
-				font-size: 14px;
-				font-weight: 500;
-				color: #333;
-			}
-			.color-value {
-				display: flex;
-				justify-content: space-between;
-				min-width: 100px;
-			}
-			.label {
-				color: #666;
-				margin-right: 10px;
-			}
-			.slider-container {
-				width: 280px;
-				display: flex;
-				flex-direction: column;
-				gap: 8px;
-			}
-			.slider-header {
-				display: flex;
-				justify-content: space-between;
-				font-size: 14px;
-				font-weight: 500;
-				color: #333;
-			}
-			input[type="range"] {
-				width: 100%;
-				accent-color: #3f51b5;
-				cursor: pointer;
-			}
-			input[type="range"]:disabled {
-				opacity: 0.5;
-				cursor: not-allowed;
-			}
-		`
-	];
+	protected createRenderRoot() {
+		return this;
+	}
 
-	@property() accessor disabled = false;
+	@property({ type: Boolean }) accessor deviceConnected = false;
+	@property() accessor messageSender: IMessageSender | undefined;
 
 	private canvasElement: HTMLCanvasElement | null = null;
 	private hue = 30;
@@ -211,25 +139,19 @@ export class RgbColorWheel extends LitElement {
 		this.currentColor = this.hslToRgb(this.hue, this.saturation, this.lightness);
 
 		if (emitEvent) {
-			this.dispatchEvent(
-				new CustomEvent("color-selected", {
-					detail: {
-						r: this.currentColor.r,
-						g: this.currentColor.g,
-						b: this.currentColor.b,
-						h: Math.round(this.hue),
-						s: Math.round(this.saturation),
-						l: Math.round(this.lightness)
-					}
-				})
-			);
+			const payload = new Uint8Array([
+				this.currentColor.r,
+				this.currentColor.g,
+				this.currentColor.b
+			]);
+			void this.messageSender?.send(0x0002, 0x0001, payload);
 		}
 
 		this.requestUpdate();
 	}
 
 	private handleCanvasClick(e: MouseEvent) {
-		if (this.disabled || !this.canvasElement) return;
+		if (!this.deviceConnected || !this.canvasElement) return;
 
 		const rect = this.canvasElement.getBoundingClientRect();
 		const scaleX = this.canvasElement.width / rect.width;
@@ -254,7 +176,7 @@ export class RgbColorWheel extends LitElement {
 	}
 
 	private handleLightnessInput(e: Event) {
-		if (this.disabled) return;
+		if (!this.deviceConnected) return;
 
 		const target = e.target as HTMLInputElement;
 		const value = Number(target.value);
@@ -273,8 +195,8 @@ export class RgbColorWheel extends LitElement {
 						width="280"
 						height="280"
 						@click="${this.handleCanvasClick}"
-						?disabled="${this.disabled}"
-						style="${this.disabled
+						?disabled="${!this.deviceConnected}"
+						style="${!this.deviceConnected
 							? "opacity: 0.5; cursor: not-allowed;"
 							: ""}"
 					></canvas>
@@ -291,7 +213,7 @@ export class RgbColorWheel extends LitElement {
 						step="1"
 						.value="${String(Math.round(this.lightness))}"
 						@input="${this.handleLightnessInput}"
-						?disabled="${this.disabled}"
+						?disabled="${!this.deviceConnected}"
 					/>
 				</div>
 				<div class="color-preview">

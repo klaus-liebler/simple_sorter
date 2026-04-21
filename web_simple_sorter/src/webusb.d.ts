@@ -202,3 +202,5 @@ interface USB extends EventTarget {
 }
 
 type BufferSource = ArrayBuffer | ArrayBufferView;
+
+declare module "*.css";
