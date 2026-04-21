@@ -186,7 +186,7 @@ export class UsbService {
 
 	async requestDevice() {
 		try {
-			const device = await navigator.usb.requestDevice({ filters: [] });
+			const device = await navigator.usb.requestDevice({ filters: [ { vendorId: 0xcafe } ] });
 			this.device = device;
 			await this.connectDevice();
 		} catch (error) {

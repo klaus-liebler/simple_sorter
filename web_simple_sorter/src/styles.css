@@ -238,6 +238,40 @@ sorter-panel .servo-section {
 	background: var(--ui-color-bg-subtle);
 }
 
+sorter-panel .mode-section {
+	display: grid;
+	gap: 12px;
+	padding: 12px;
+	border: 1px solid var(--ui-color-border-soft);
+	border-radius: var(--ui-radius-lg);
+	background: var(--ui-color-bg-subtle);
+}
+
+sorter-panel .mode-label {
+	font-weight: 600;
+	font-size: 15px;
+}
+
+sorter-panel .mode-buttons {
+	display: grid;
+	grid-template-columns: repeat(2, minmax(0, 1fr));
+	gap: 8px;
+}
+
+sorter-panel .mode-btn {
+	height: 36px;
+	padding: 0 10px;
+	font-size: 13px;
+	font-weight: 700;
+	letter-spacing: 0.02em;
+}
+
+sorter-panel .mode-btn.active {
+	background: #dbeafe;
+	border-color: #60a5fa;
+	color: #1e40af;
+}
+
 sorter-panel .servo-label {
 	font-weight: 600;
 	font-size: 15px;

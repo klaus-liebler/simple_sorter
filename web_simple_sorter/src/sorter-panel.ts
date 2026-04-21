@@ -10,6 +10,13 @@ type SorterClassResult = {
 	confidence: number;
 };
 
+enum SorterMode {
+	NO_DYNAMICS = 0,
+	RIGHT = 1,
+	MIDDLE = 2,
+	LEFT = 3
+}
+
 @customElement("sorter-panel")
 export class SorterPanel extends LitElement {
 	private static readonly DEFAULT_MODEL_URL = "https://teachablemachine.withgoogle.com/models/Wq-djWmcV/";
@@ -22,8 +29,9 @@ export class SorterPanel extends LitElement {
 	@property({ type: Boolean }) accessor deviceConnected = false;
 	@property() accessor messageSender: IMessageSender | undefined;
 
-	@state() private accessor servoAngle = 90;
+	@state() private accessor servoU8 = 90;
 	@state() private accessor statusMessage = "Model nicht geladen";
+	@state() private accessor selectedMode = SorterMode.NO_DYNAMICS;
 	
 	@state() private accessor modelLoaded = false;
 
@@ -33,6 +41,12 @@ export class SorterPanel extends LitElement {
 	private labelContainerRef: Ref<HTMLDivElement> = createRef();
 	private maxPredictions=0;
 	private lastSentClass: number = -1;
+	private readonly modeOptions: Array<{ mode: SorterMode; label: string }> = [
+		{ mode: SorterMode.NO_DYNAMICS, label: "NO_DYNAMICS" },
+		{ mode: SorterMode.RIGHT, label: "RIGHT" },
+		{ mode: SorterMode.MIDDLE, label: "MIDDLE" },
+		{ mode: SorterMode.LEFT, label: "LEFT" }
+	];
 
 	private onModelInput(event: Event) {
 		const target = event.target as HTMLInputElement;
@@ -117,9 +131,19 @@ export class SorterPanel extends LitElement {
 
 	private handleServoChange(event: Event) {
 		const target = event.target as HTMLInputElement;
-		this.servoAngle = parseFloat(target.value);
-		const clampedAngle = Math.max(0, Math.min(180, Math.round(this.servoAngle)));
-		const payload = new Uint8Array([clampedAngle]);
+		this.servoU8 = parseFloat(target.value);
+		
+		const payload = new Uint8Array([this.servoU8]);
+		void this.messageSender?.send(0x0003, 0x0001, payload);
+	}
+
+	private handleModeChange(mode: SorterMode) {
+		if (this.selectedMode === mode) {
+			return;
+		}
+
+		this.selectedMode = mode;
+		const payload = new Uint8Array([mode]);
 		void this.messageSender?.send(0x0003, 0x0002, payload);
 	}
 
@@ -142,6 +166,24 @@ export class SorterPanel extends LitElement {
 
 				<div ${ref(this.labelContainerRef)}></div>
 
+				<div class="mode-section">
+					<div class="mode-label">Betriebsmodus</div>
+					<div class="mode-buttons">
+						${this.modeOptions.map(
+							({ mode, label }) => html`
+								<button
+									type="button"
+									class="mode-btn ${this.selectedMode === mode ? "active" : ""}"
+									@click=${() => this.handleModeChange(mode)}
+									?disabled=${!this.deviceConnected}
+								>
+									${label}
+								</button>
+							`
+						)}
+					</div>
+				</div>
+
 				<div class="servo-section">
 					<div class="servo-label">Servo-Drehwinkel</div>
 					<div class="servo-controls">
@@ -149,13 +191,13 @@ export class SorterPanel extends LitElement {
 							type="range"
 							class="servo-slider"
 							min="0"
-							max="180"
-							.value=${String(this.servoAngle)}
+							max="255"
+							.value=${String(this.servoU8)}
 							@input=${this.handleServoChange}
 						/>
 						<div class="servo-value">
 							<span>0°</span>
-							<span style="font-weight: 600;">${Math.round(this.servoAngle)}°</span>
+							<span style="font-weight: 600;">${Math.round(this.servoU8*180/255)}°</span>
 							<span>180°</span>
 						</div>
 					</div>

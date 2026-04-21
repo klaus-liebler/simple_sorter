@@ -13,5 +13,6 @@
     "--query-driver=**",
     "--compile-commands-dir=c:\\repos\\simple_sorter\\firmware_simple_sorter\\build"
   ],
-  "idf.portWin": "COM7"
+  "idf.portWin": "COM12",
+  "idf.flashType": "UART"
 }

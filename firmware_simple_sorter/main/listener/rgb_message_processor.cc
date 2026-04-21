@@ -18,4 +18,8 @@ void RGBMessageProcessor::Handle(ISendBackInterface& context, uint16_t message_i
   board_led_.SetPixel(0, color);
 }
 
+uint16_t RGBMessageProcessor::GetNamespace() const {
+  return kNamespaceRgb;
+}
+
 }  // namespace listener
