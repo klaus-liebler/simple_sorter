@@ -20,7 +20,7 @@ export class ConnectPanel extends LitElement {
 
 	render() {
 		return html`
-			<div class="panel">
+			<div class="panel app-panel">
 				<div class="status">
 					<div class="status-label">Status</div>
 					<div

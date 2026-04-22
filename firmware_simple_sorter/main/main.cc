@@ -214,26 +214,6 @@ IMessageProcessor *FindNamespaceProcessor(uint16_t name_space)
   return nullptr;
 }
 
-static void monitoring_task(void *context)
-{
-  (void)context;
-
-  while (true)
-  {
-    ESP_LOGI(
-        MONITOR_LOG_TAG,
-        "mounted=%d suspended=%d cdc_connected=%d cdc_rx=%u cdc_tx_free=%u button=%d heap=%lu",
-        tud_mounted() ? 1 : 0,
-        tud_suspended() ? 1 : 0,
-        tud_cdc_connected() ? 1 : 0,
-        static_cast<unsigned>(tud_cdc_available()),
-        static_cast<unsigned>(tud_cdc_write_available()),
-        board_button_pressed() ? 1 : 0,
-        static_cast<unsigned long>(esp_get_free_heap_size()));
-    vTaskDelay(pdMS_TO_TICKS(1000));
-  }
-}
-
 static void processing_task(void *context)
 {
   (void)context;
@@ -250,6 +230,17 @@ static void processing_task(void *context)
       }
     }
     vTaskDelay(pdMS_TO_TICKS(10));
+  }
+}
+
+static void usb_task(void *context)
+{
+  (void)context;
+
+  while (true)
+  {
+    tud_task();
+    vTaskDelay(1);
   }
 }
 
@@ -301,14 +292,31 @@ extern "C" void app_main(void)
 
   // s_previous_log_vprintf = esp_log_set_vprintf(cdc_log_vprintf);
 
-  xTaskCreate(monitoring_task, "monitoring", 4096, nullptr, tskIDLE_PRIORITY + 1, nullptr);
   xTaskCreate(processing_task, "processing", 4096, nullptr, tskIDLE_PRIORITY + 2, nullptr);
+  xTaskCreate(usb_task, "usb", 4096, nullptr, tskIDLE_PRIORITY + 3, nullptr);
 
   while (1)
   {
-    tud_task(); // tinyusb device task
-    tud_cdc_write_flush();
-    vTaskDelay(pdMS_TO_TICKS(1));
+    char buf[64];
+    
+    while (true)
+    {
+      snprintf(buf, sizeof(buf), "mntd=%d sspnd=%d cdc_cnctd=%d cdc_rx=%u cdc_tx_free=%u btn=%d heap=%lu",
+               tud_mounted() ? 1 : 0,
+               tud_suspended() ? 1 : 0,
+               tud_cdc_connected() ? 1 : 0,
+               static_cast<unsigned>(tud_cdc_available()),
+               static_cast<unsigned>(tud_cdc_write_available()),
+               board_button_pressed() ? 1 : 0,
+               static_cast<unsigned long>(esp_get_free_heap_size()));
+      ESP_LOGI(
+          MONITOR_LOG_TAG,
+          "%s",
+          buf);
+      tud_cdc_write_str(buf);
+      tud_cdc_write_str("\r\n");
+      vTaskDelay(pdMS_TO_TICKS(3000));
+    }
   }
 }
 
@@ -452,7 +460,7 @@ extern "C" void tud_cdc_rx_cb(uint8_t idx)
   {
     uint8_t buf[64];
     uint32_t const count = tud_cdc_read(buf, sizeof(buf));
-    tud_cdc_write(buf, count);
+    //tud_cdc_write(buf, count);
   }
-  tud_cdc_write_flush();
+  //tud_cdc_write_flush();
 }
