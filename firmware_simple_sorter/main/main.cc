@@ -21,10 +21,7 @@
 
 #include "driver/gpio.h"
 #include "driver/uart.h"
-#include "esp_private/usb_phy.h"
-
-#include "tusb_config.h"
-#include "tusb.h"
+#include "tinyusb_default_config.h"
 #include "listener/echo_message_processor.hh"
 #include "listener/rgb_message_processor.hh"
 #include "listener/servo_message_processor.hh"
@@ -94,7 +91,6 @@ RGBLED::MultipleFlashesPattern USB_INIT_FAILED(CRGB::Red, 2);
 
 RGBLED::M<1, RGBLED::DeviceType::WS2812> s_board_led;
 ISendBackInterface *s_sendBack;
-usb_phy_handle_t phy_hdl;
 int (*s_previous_log_vprintf)(const char *, va_list) = nullptr;
 
 static void cdc_write_with_timeout(const char *data, size_t len, TickType_t timeout_ticks)
@@ -210,7 +206,6 @@ IMessageProcessor *FindNamespaceProcessor(uint16_t name_space)
       return processor;
     }
   }
-
   return nullptr;
 }
 
@@ -253,6 +248,16 @@ static void processing_task(void *context)
   }
 }
 
+  static void device_event_handler(tinyusb_event_t *event, void *arg)
+  {
+    switch (event->id) {
+    case TINYUSB_EVENT_ATTACHED:
+    case TINYUSB_EVENT_DETACHED:
+    default:
+        break;
+    }
+  }
+
 extern "C" void app_main(void)
 {
 
@@ -272,33 +277,11 @@ extern "C" void app_main(void)
   gpio_set_direction(BUTTON_PIN, GPIO_MODE_INPUT);
   gpio_set_pull_mode(BUTTON_PIN, BUTTON_STATE_ACTIVE ? GPIO_PULLDOWN_ONLY : GPIO_PULLUP_ONLY);
 
-  usb_phy_config_t phy_conf = {};
-  phy_conf.controller = USB_PHY_CTRL_OTG;
-  phy_conf.target = USB_PHY_TARGET_INT;
-  phy_conf.otg_mode = USB_OTG_MODE_DEVICE;
-  // https://github.com/hathach/tinyusb/issues/2943#issuecomment-2601888322
-  // Set speed to undefined (auto-detect) to avoid timing/racing issue with S3 hosts such as macOS.
-  phy_conf.otg_speed = USB_PHY_SPEED_UNDEFINED;
 
-  esp_err_t const err = usb_new_phy(&phy_conf, &phy_hdl);
-  if (err != ESP_OK)
-  {
-    printf("usb_new_phy failed: %s\r\n", esp_err_to_name(err));
-    phy_hdl = nullptr;
-    s_board_led.AnimatePixel(0, &USB_INIT_FAILED);
-    while (1)
-    {
-      s_board_led.Refresh();
-      vTaskDelay(pdMS_TO_TICKS(20));
-    }
-  }
+  const tinyusb_config_t tusb_cfg = TINYUSB_DEFAULT_CONFIG(device_event_handler);
+  tinyusb_driver_install(&tusb_cfg);
 
-  // init device stack on configured roothub port
-  tusb_rhport_init_t dev_init = {
-      .role = TUSB_ROLE_DEVICE,
-      .speed = TUSB_SPEED_AUTO};
-  tusb_init(BOARD_TUD_RHPORT, &dev_init);
-
+  
   // s_previous_log_vprintf = esp_log_set_vprintf(cdc_log_vprintf);
 
   xTaskCreate(monitoring_task, "monitoring", 4096, nullptr, tskIDLE_PRIORITY + 1, nullptr);
