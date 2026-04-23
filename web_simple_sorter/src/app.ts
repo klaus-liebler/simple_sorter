@@ -1,11 +1,13 @@
 import { LitElement, html } from "lit";
 import { customElement, state } from "lit/decorators.js";
+import { unsafeHTML } from "lit/directives/unsafe-html.js";
 import "./styles.css";
 import "./connect-panel.js";
 import "./rgb-color-wheel-panel.js";
 import "./sorter-panel.js";
 import "./servo_test_panel.js";
 import { UsbService } from "./usb.js";
+import hsos_logo from "./hsos_logo.svg?raw";
 
 export interface IMessageSender {
 	send(namespaceId: number, messageId: number, payload: Uint8Array): Promise<void>;
@@ -46,6 +48,10 @@ export class Application extends LitElement {
 	render() {
 		return html`
 			<div class="container">
+				<section class="logo-section">
+					<div class="hsos-logo" aria-label="HSOS Logo">${unsafeHTML(hsos_logo)}</div>
+				</section>
+
 				<section class="header-section">
 					<connect-panel
 						.deviceConnected=${this.deviceConnected}
@@ -57,6 +63,7 @@ export class Application extends LitElement {
 
 				<section class="header-section">
 					<sorter-panel
+						.deviceConnected=${this.deviceConnected}
 						.messageSender=${this.messageSender}
 					></sorter-panel>
 				</section>

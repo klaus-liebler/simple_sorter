@@ -25,12 +25,29 @@
 #ifndef USB_DESCRIPTORS_H_
 #define USB_DESCRIPTORS_H_
 
+#include "tusb.h"
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 enum
 {
   VENDOR_REQUEST_WEBUSB = 1,
   VENDOR_REQUEST_MICROSOFT = 2
 };
 
+extern const tusb_desc_device_t g_usb_device_descriptor;
+extern const uint8_t g_usb_full_speed_configuration_descriptor[];
+extern const char *g_usb_string_descriptor[];
+extern const int g_usb_string_descriptor_count;
+
+void usb_descriptors_init(void);
+
 extern uint8_t const desc_ms_os_20[];
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* USB_DESCRIPTORS_H_ */

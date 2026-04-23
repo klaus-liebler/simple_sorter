@@ -20,11 +20,15 @@ export class SorterPanel extends LitElement {
 	}
 
 	@property() accessor modelUrl = SorterPanel.DEFAULT_MODEL_URL;
+	@property({ type: Boolean }) accessor deviceConnected = false;
 	@property() accessor messageSender: IMessageSender | undefined;
 
 	@state() private accessor statusMessage = "Model nicht geladen";
 	
 	@state() private accessor modelLoaded = false;
+	@state() private accessor leftClassPercent = 0;
+	@state() private accessor rightClassPercent = 0;
+	@state() private accessor lastDropSide: "left" | "right" | null = null;
 
 	private model:tmImage.CustomMobileNet|null=null;
 	private webcam:tmImage.Webcam|null=null;
@@ -32,10 +36,26 @@ export class SorterPanel extends LitElement {
 	private labelContainerRef: Ref<HTMLDivElement> = createRef();
 	private maxPredictions=0;
 	private lastCommandSentAt = 0;
+	private predictionLoopRunning = false;
+	private dropAnimationTimeout: ReturnType<typeof setTimeout> | undefined;
+
+	firstUpdated() {
+		void this.ensureWebcamStarted();
+	}
 
 	private onModelInput(event: Event) {
 		const target = event.target as HTMLInputElement;
 		this.modelUrl = target.value;
+	}
+
+	private triggerDropAnimation(side: "left" | "right") {
+		this.lastDropSide = side;
+		if (this.dropAnimationTimeout) {
+			clearTimeout(this.dropAnimationTimeout);
+		}
+		this.dropAnimationTimeout = setTimeout(() => {
+			this.lastDropSide = null;
+		}, 900);
 	}
 
 	private async sendLedForPrediction(prediction: Array<{ probability: number }>) {
@@ -72,11 +92,17 @@ export class SorterPanel extends LitElement {
 
 		const payloadServo = new Uint8Array([sm]);
 		await this.messageSender?.send(0x0003, 0x0002, payloadServo);
+		this.triggerDropAnimation(targetClass === 0 ? "left" : "right");
 		this.lastCommandSentAt = now;
 	}
 
 
-	private async  loop() {
+	private async  onAnimationFrame() {
+		if (!this.model || !this.webcam) {
+			this.predictionLoopRunning = false;
+			return;
+		}
+
         this.webcam?.update(); // update the webcam frame
         const prediction = await this.model!.predict(this.webcam!.canvas)!;
         for (let i = 0; i < this.maxPredictions; i++) {
@@ -86,12 +112,40 @@ export class SorterPanel extends LitElement {
 				row.innerHTML = classPrediction;
 			}
         }
+		this.leftClassPercent = Math.max(0, Math.min(100, (prediction[0]?.probability ?? 0) * 100));
+		this.rightClassPercent = Math.max(0, Math.min(100, (prediction[1]?.probability ?? 0) * 100));
 		await this.sendLedForPrediction(prediction);
 		
-        window.requestAnimationFrame(()=>{this.loop()});
+        window.requestAnimationFrame(()=>{this.onAnimationFrame()});
     }
 
+	private async ensureWebcamStarted() {
+		if (this.webcam) {
+			return;
+		}
+
+		try {
+			const flip = true;
+			this.webcam = new tmImage.Webcam(200, 200, flip);
+			await this.webcam.setup();
+			await this.webcam.play();
+			this.webcamContainerRef.value?.replaceChildren(this.webcam.canvas);
+		} catch {
+			this.statusMessage = "Kamerazugriff fehlgeschlagen";
+		}
+	}
+
 	private async loadModel() {
+		if (!this.deviceConnected) {
+			this.statusMessage = "Bitte erst verbinden";
+			return;
+		}
+
+		await this.ensureWebcamStarted();
+		if (!this.webcam) {
+			return;
+		}
+
 		if (!this.modelUrl.trim()) {
 			this.statusMessage = "Bitte eine Model-URL eintragen";
 			return;
@@ -110,21 +164,15 @@ export class SorterPanel extends LitElement {
 		this.statusMessage = "Model geladen";
         this.maxPredictions = this.model.getTotalClasses();
 		this.lastCommandSentAt = 0;
+		this.leftClassPercent = 0;
+		this.rightClassPercent = 0;
 		this.labelContainerRef.value!.innerHTML = "";
-		this.webcamContainerRef.value!.innerHTML = "";
 
-		
-        for (let i = 0; i < this.maxPredictions; i++) { // and class labels
-            this.labelContainerRef.value!.appendChild(document.createElement("div"));
-        }
 
-        // Convenience function to setup a webcam
-        const flip = true; // whether to flip the webcam
-        this.webcam = new tmImage.Webcam(200, 200, flip); // width, height, flip
-        await this.webcam.setup(); // request access to the webcam
-        await this.webcam.play();
-		this.webcamContainerRef.value!.appendChild(this.webcam?.canvas);
-        window.requestAnimationFrame(()=>{this.loop()});
+		if (!this.predictionLoopRunning) {
+			this.predictionLoopRunning = true;
+			window.requestAnimationFrame(()=>{this.onAnimationFrame()});
+		}
 	}
 
 	render() {
@@ -137,15 +185,52 @@ export class SorterPanel extends LitElement {
 						placeholder="Teachable-Machine URL"
 						.value=${this.modelUrl}
 						@input=${this.onModelInput}
+						?disabled=${!this.deviceConnected}
+						style=${!this.deviceConnected ? "opacity: 0.5; cursor: not-allowed;" : ""}
 					/>
-					<button @click=${this.loadModel}>Model laden</button>
+					<button ?disabled=${!this.deviceConnected} @click=${this.loadModel}>Model laden</button>
 				</div>
 
 				<div class="panel-text">${this.statusMessage}</div>
 
-				<div ${ref(this.webcamContainerRef)}></div>
+				<div class="sorter-webcam" ${ref(this.webcamContainerRef)}></div>
 
-				<div ${ref(this.labelContainerRef)}></div>
+				<div class="sorter-prediction-row">
+					<div
+						class=${`sorter-drop-indicator sorter-drop-indicator-left ${this.lastDropSide === "left" ? "sorter-drop-indicator-fired" : ""}`}
+					>
+						ABWURF
+					</div>
+					<div
+						class=${`sorter-prediction-bars ${this.lastDropSide === "left" ? "sorter-prediction-bars-left-fired" : ""} ${this.lastDropSide === "right" ? "sorter-prediction-bars-right-fired" : ""}`}
+						aria-label="Klassen-Wahrscheinlichkeiten"
+					>
+						<div class="sorter-prediction-half sorter-prediction-half-left">
+							<div
+								class="sorter-prediction-fill sorter-prediction-fill-left"
+								style=${`width: ${this.leftClassPercent}%;`}
+							></div>
+						</div>
+						<div class="sorter-prediction-center-line"></div>
+						<div class="sorter-prediction-half sorter-prediction-half-right">
+							<div
+								class="sorter-prediction-fill sorter-prediction-fill-right"
+								style=${`width: ${this.rightClassPercent}%;`}
+							></div>
+						</div>
+					</div>
+					<div
+						class=${`sorter-drop-indicator sorter-drop-indicator-right ${this.lastDropSide === "right" ? "sorter-drop-indicator-fired" : ""}`}
+					>
+						ABWURF
+					</div>
+				</div>
+				<div class="sorter-prediction-values panel-text">
+					<span>Links (Klasse 0): ${this.leftClassPercent.toFixed(0)}%</span>
+					<span>Rechts (Klasse 1): ${this.rightClassPercent.toFixed(0)}%</span>
+				</div>
+
+				<div class="sorter-labels" ${ref(this.labelContainerRef)}></div>
 			</div>
 		`;
 	}

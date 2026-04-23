@@ -22,6 +22,11 @@
 #include "driver/gpio.h"
 #include "driver/uart.h"
 #include "tinyusb_default_config.h"
+#include "tinyusb.h"
+#include "tinyusb_default_config.h"
+#include "tinyusb_cdc_acm.h"
+#include "tinyusb_console.h"
+
 #include "listener/echo_message_processor.hh"
 #include "listener/rgb_message_processor.hh"
 #include "listener/servo_message_processor.hh"
@@ -93,90 +98,6 @@ RGBLED::M<1, RGBLED::DeviceType::WS2812> s_board_led;
 ISendBackInterface *s_sendBack;
 int (*s_previous_log_vprintf)(const char *, va_list) = nullptr;
 
-static void cdc_write_with_timeout(const char *data, size_t len, TickType_t timeout_ticks)
-{
-  if (data == nullptr || len == 0)
-  {
-    return;
-  }
-
-  TickType_t const start = xTaskGetTickCount();
-  while (len > 0)
-  {
-    uint32_t const avail = tud_cdc_write_available();
-    if (avail == 0)
-    {
-      if ((xTaskGetTickCount() - start) >= timeout_ticks)
-      {
-        break;
-      }
-      vTaskDelay(1);
-      continue;
-    }
-
-    size_t chunk_len = len;
-    if (chunk_len > static_cast<size_t>(avail))
-    {
-      chunk_len = static_cast<size_t>(avail);
-    }
-
-    uint32_t const written = tud_cdc_write(data, chunk_len);
-    if (written == 0)
-    {
-      if ((xTaskGetTickCount() - start) >= timeout_ticks)
-      {
-        break;
-      }
-      vTaskDelay(1);
-      continue;
-    }
-
-    data += written;
-    len -= written;
-  }
-}
-
-static int cdc_log_vprintf(const char *fmt, va_list args)
-{
-  va_list args_for_prev;
-  va_list args_for_cdc;
-  va_copy(args_for_prev, args);
-  va_copy(args_for_cdc, args);
-
-  int printed = 0;
-  if (s_previous_log_vprintf != nullptr)
-  {
-    printed = s_previous_log_vprintf(fmt, args_for_prev);
-  }
-  va_end(args_for_prev);
-
-  if (xPortInIsrContext())
-  {
-    va_end(args_for_cdc);
-    return printed;
-  }
-
-  char line[258];
-  int const line_len = vsnprintf(line, sizeof(line) - 2, fmt, args_for_cdc);
-  va_end(args_for_cdc);
-
-  if (line_len <= 0 || !tud_cdc_connected())
-  {
-    return printed;
-  }
-
-  size_t to_send = static_cast<size_t>(line_len);
-  if (to_send > (sizeof(line) - 2))
-  {
-    to_send = sizeof(line) - 2;
-  }
-
-  cdc_write_with_timeout(line, to_send, CDC_LOG_WRITE_TIMEOUT_TICKS);
-  tud_cdc_write_flush();
-
-  return printed;
-}
-
 struct webusb_url_desc_t
 {
   uint8_t bLength;
@@ -238,8 +159,20 @@ static void processing_task(void *context)
     }
   }
 
+static uint8_t rx_buf[CONFIG_TINYUSB_CDC_RX_BUFSIZE + 1];
+extern "C" void tinyusb_cdc_rx_callback(int  itf_as_int, cdcacm_event_t *event)
+{
+  (void)event;
+  tinyusb_cdcacm_itf_t itf = static_cast<tinyusb_cdcacm_itf_t>(itf_as_int);
+  size_t rx_size = 0;
+  ESP_ERROR_CHECK(tinyusb_cdcacm_read(itf, rx_buf, CONFIG_TINYUSB_CDC_RX_BUFSIZE, &rx_size));
+}
+
+
 extern "C" void app_main(void)
 {
+
+  usb_descriptors_init();
 
   s_sendBack = new VendorSendBack();
 
@@ -258,14 +191,28 @@ extern "C" void app_main(void)
   gpio_set_pull_mode(BUTTON_PIN, BUTTON_STATE_ACTIVE ? GPIO_PULLDOWN_ONLY : GPIO_PULLUP_ONLY);
 
 
-  const tinyusb_config_t tusb_cfg = TINYUSB_DEFAULT_CONFIG(device_event_handler);
-  tinyusb_driver_install(&tusb_cfg);
+  tinyusb_config_t tusb_cfg = TINYUSB_DEFAULT_CONFIG(device_event_handler);
+  tusb_cfg.descriptor.device = &g_usb_device_descriptor;
+  tusb_cfg.descriptor.string = g_usb_string_descriptor;
+  tusb_cfg.descriptor.string_count = g_usb_string_descriptor_count;
+  tusb_cfg.descriptor.full_speed_config = g_usb_full_speed_configuration_descriptor;
+  ESP_ERROR_CHECK(tinyusb_driver_install(&tusb_cfg));
+  tinyusb_config_cdcacm_t acm_cfg = {
+      .cdc_port = TINYUSB_CDC_ACM_0,
+      .callback_rx = &tinyusb_cdc_rx_callback,
+      .callback_rx_wanted_char = nullptr,
+      .callback_line_state_changed = nullptr,
+      .callback_line_coding_changed = nullptr,
+  };
+  ESP_ERROR_CHECK(tinyusb_cdcacm_init(&acm_cfg));
+  ESP_ERROR_CHECK(tinyusb_console_init(TINYUSB_CDC_ACM_0)); // log to usb CDC-ACM interface
+  
 
   
   // s_previous_log_vprintf = esp_log_set_vprintf(cdc_log_vprintf);
 
   xTaskCreate(processing_task, "processing", 4096, nullptr, tskIDLE_PRIORITY + 2, nullptr);
-  xTaskCreate(usb_task, "usb", 4096, nullptr, tskIDLE_PRIORITY + 3, nullptr);
+  
 
   while (1)
   {
@@ -273,7 +220,9 @@ extern "C" void app_main(void)
     
     while (true)
     {
-      snprintf(buf, sizeof(buf), "mntd=%d sspnd=%d cdc_cnctd=%d cdc_rx=%u cdc_tx_free=%u btn=%d heap=%lu",
+      ESP_LOGI(
+          MONITOR_LOG_TAG,
+          "mntd=%d sspnd=%d cdc_cnctd=%d cdc_rx=%u cdc_tx_free=%u btn=%d heap=%lu",
                tud_mounted() ? 1 : 0,
                tud_suspended() ? 1 : 0,
                tud_cdc_connected() ? 1 : 0,
@@ -281,12 +230,6 @@ extern "C" void app_main(void)
                static_cast<unsigned>(tud_cdc_write_available()),
                board_button_pressed() ? 1 : 0,
                static_cast<unsigned long>(esp_get_free_heap_size()));
-      ESP_LOGI(
-          MONITOR_LOG_TAG,
-          "%s",
-          buf);
-      tud_cdc_write_str(buf);
-      tud_cdc_write_str("\r\n");
       vTaskDelay(pdMS_TO_TICKS(3000));
     }
   }
@@ -379,32 +322,4 @@ extern "C" void tud_vendor_rx_cb(uint8_t idx, const uint8_t *buffer, uint16_t bu
   }
 }
 
-//--------------------------------------------------------------------+
-// USB CDC
-//--------------------------------------------------------------------+
 
-// Invoked when cdc line state changed e.g connected/disconnected
-extern "C" void tud_cdc_line_state_cb(uint8_t itf, bool dtr, bool rts)
-{
-  (void)itf;
-
-  // connected
-  if (dtr && rts)
-  {
-    tud_cdc_write_str("\r\nKlaus Lieblers WebUSB device example\r\n");
-    tud_cdc_write_flush();
-  }
-}
-
-// Invoked when CDC interface received data from host
-extern "C" void tud_cdc_rx_cb(uint8_t idx)
-{
-  (void)idx;
-  while (tud_cdc_available())
-  {
-    uint8_t buf[64];
-    uint32_t const count = tud_cdc_read(buf, sizeof(buf));
-    //tud_cdc_write(buf, count);
-  }
-  //tud_cdc_write_flush();
-}

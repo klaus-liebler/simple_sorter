@@ -1,0 +1,7 @@
+{
+  "host": "example.com",
+  "port": 22,
+  "username": "deploy-user",
+  "password": "replace-with-your-password",
+  "remotePath": "/var/www/html/index.html"
+}

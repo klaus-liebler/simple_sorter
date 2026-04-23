@@ -3,7 +3,69 @@
 #include "esp_mac.h"
 
 
-#define ITF_VENDOR 2
+#define CONFIG_TOTAL_LEN    (TUD_CONFIG_DESC_LEN + TUD_CDC_DESC_LEN + TUD_VENDOR_DESC_LEN)
+
+#define EPNUM_CDC_NOTIF     0x81
+#define EPNUM_CDC_OUT       0x02
+#define EPNUM_CDC_IN        0x82
+#define EPNUM_VENDOR_OUT    0x03
+#define EPNUM_VENDOR_IN     0x83
+
+
+enum
+{
+  ITF_CDC = 0,
+  ITF_CDC_DATA,
+  ITF_VENDOR,
+  ITF_TOTAL
+};
+
+static char s_serial_number[2 * 6 + 1];
+
+const tusb_desc_device_t g_usb_device_descriptor =
+{
+  .bLength = sizeof(tusb_desc_device_t),
+  .bDescriptorType = TUSB_DESC_DEVICE,
+  .bcdUSB = 0x0210,
+  .bDeviceClass = TUSB_CLASS_MISC,
+  .bDeviceSubClass = MISC_SUBCLASS_COMMON,
+  .bDeviceProtocol = MISC_PROTOCOL_IAD,
+  .bMaxPacketSize0 = CFG_TUD_ENDPOINT0_SIZE,
+  .idVendor = 0xCAFE,
+  .idProduct = 0x4021,
+  .bcdDevice = 0x0100,
+  .iManufacturer = 0x01,
+  .iProduct = 0x02,
+  .iSerialNumber = 0x03,
+  .bNumConfigurations = 0x01,
+};
+
+const uint8_t g_usb_full_speed_configuration_descriptor[] =
+{
+  TUD_CONFIG_DESCRIPTOR(1, ITF_TOTAL, 0, CONFIG_TOTAL_LEN, 0x00, 100),
+  TUD_CDC_DESCRIPTOR(ITF_CDC, 4, EPNUM_CDC_NOTIF, 8, EPNUM_CDC_OUT, EPNUM_CDC_IN, 64),
+  TUD_VENDOR_DESCRIPTOR(ITF_VENDOR, 5, EPNUM_VENDOR_OUT, EPNUM_VENDOR_IN, 64),
+};
+
+const char *g_usb_string_descriptor[] =
+{
+  (const char[]){0x09, 0x04},
+  "Klaus Liebler, HS Osnabrueck",
+  "AISorter",
+  s_serial_number,
+  "AISorter CDC",
+  "AISorter WebUSB",
+};
+
+const int g_usb_string_descriptor_count = sizeof(g_usb_string_descriptor) / sizeof(g_usb_string_descriptor[0]);
+
+void usb_descriptors_init(void)
+{
+  uint8_t mac[6] = {0};
+  esp_read_mac(mac, ESP_MAC_WIFI_STA);
+  snprintf(s_serial_number, sizeof(s_serial_number), "%02X%02X%02X%02X%02X%02X",
+           mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+}
 
 //--------------------------------------------------------------------+
 // BOS Descriptor
