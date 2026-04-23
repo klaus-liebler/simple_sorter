@@ -310,36 +310,8 @@ static void process_vendor_binary_message(const uint8_t msg[BINARY_MSG_SIZE])
   message_listener->Handle(*s_sendBack, message_id, payload);
 }
 
-//--------------------------------------------------------------------+
-// Device callbacks
-//--------------------------------------------------------------------+
 
-// Invoked when device is mounted
-extern "C" void tud_mount_cb(void)
-{
-  s_board_led.AnimatePixel(0, &MOUNTED);
-}
 
-// Invoked when device is unmounted
-extern "C" void tud_umount_cb(void)
-{
-  s_board_led.AnimatePixel(0, &NOT_MOUNTED);
-}
-
-// Invoked when usb bus is suspended
-// remote_wakeup_en : if host allow us  to perform remote wakeup
-// Within 7ms, device must draw an average of current less than 2.5 mA from bus
-extern "C" void tud_suspend_cb(bool remote_wakeup_en)
-{
-  (void)remote_wakeup_en;
-  s_board_led.AnimatePixel(0, &SUSPENDED);
-}
-
-// Invoked when usb bus is resumed
-extern "C" void tud_resume_cb(void)
-{
-  s_board_led.AnimatePixel(0, tud_mounted() ? &MOUNTED : &NOT_MOUNTED);
-}
 
 //--------------------------------------------------------------------+
 // WebUSB use vendor class
