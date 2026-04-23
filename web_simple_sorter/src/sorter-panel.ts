@@ -3,19 +3,13 @@ import { customElement, property, state } from "lit/decorators.js";
 import { createRef, ref } from "lit-html/directives/ref.js";
 import type { Ref } from "lit-html/directives/ref.js";
 import type { IMessageSender } from "./app.js";
+import  { SorterMode } from "./SorterMode.ts";
 import * as tmImage from "@teachablemachine/image";
 
 type SorterClassResult = {
 	label: string;
 	confidence: number;
 };
-
-enum SorterMode {
-	NO_DYNAMICS = 0,
-	RIGHT = 1,
-	MIDDLE = 2,
-	LEFT = 3
-}
 
 @customElement("sorter-panel")
 export class SorterPanel extends LitElement {
@@ -26,12 +20,9 @@ export class SorterPanel extends LitElement {
 	}
 
 	@property() accessor modelUrl = SorterPanel.DEFAULT_MODEL_URL;
-	@property({ type: Boolean }) accessor deviceConnected = false;
 	@property() accessor messageSender: IMessageSender | undefined;
 
-	@state() private accessor servoU8 = 90;
 	@state() private accessor statusMessage = "Model nicht geladen";
-	@state() private accessor selectedMode = SorterMode.NO_DYNAMICS;
 	
 	@state() private accessor modelLoaded = false;
 
@@ -40,13 +31,7 @@ export class SorterPanel extends LitElement {
 	private webcamContainerRef: Ref<HTMLDivElement> = createRef();
 	private labelContainerRef: Ref<HTMLDivElement> = createRef();
 	private maxPredictions=0;
-	private lastSentClass: number = -1;
-	private readonly modeOptions: Array<{ mode: SorterMode; label: string }> = [
-		{ mode: SorterMode.NO_DYNAMICS, label: "NO_DYNAMICS" },
-		{ mode: SorterMode.RIGHT, label: "RIGHT" },
-		{ mode: SorterMode.MIDDLE, label: "MIDDLE" },
-		{ mode: SorterMode.LEFT, label: "LEFT" }
-	];
+	private lastCommandSentAt = 0;
 
 	private onModelInput(event: Event) {
 		const target = event.target as HTMLInputElement;
@@ -64,17 +49,30 @@ export class SorterPanel extends LitElement {
 			targetClass = 1;
 		}
 
-		if (targetClass === -1 || targetClass === this.lastSentClass) {
+		const now = Date.now();
+		if (
+			targetClass === -1 ||
+			now - this.lastCommandSentAt < 2000
+		) {
 			return;
 		}
 
-		const payload =
+		const payloadLED =
 			targetClass === 0
 				? new Uint8Array([255, 0, 0])
 				: new Uint8Array([0, 255, 0]);
 
-		await this.messageSender?.send(0x0002, 0x0001, payload);
-		this.lastSentClass = targetClass;
+		await this.messageSender?.send(0x0002, 0x0001, payloadLED);
+		let sm:SorterMode=SorterMode.NO_DYNAMICS;
+		if(targetClass === 0) {
+			sm=SorterMode.RIGHT;
+		}else if(targetClass === 1) {
+			sm=SorterMode.LEFT;
+		}
+
+		const payloadServo = new Uint8Array([sm]);
+		await this.messageSender?.send(0x0003, 0x0002, payloadServo);
+		this.lastCommandSentAt = now;
 	}
 
 
@@ -111,7 +109,7 @@ export class SorterPanel extends LitElement {
 		this.modelLoaded = true;
 		this.statusMessage = "Model geladen";
         this.maxPredictions = this.model.getTotalClasses();
-		this.lastSentClass = -1;
+		this.lastCommandSentAt = 0;
 		this.labelContainerRef.value!.innerHTML = "";
 		this.webcamContainerRef.value!.innerHTML = "";
 
@@ -129,29 +127,12 @@ export class SorterPanel extends LitElement {
         window.requestAnimationFrame(()=>{this.loop()});
 	}
 
-	private handleServoChange(event: Event) {
-		const target = event.target as HTMLInputElement;
-		this.servoU8 = parseFloat(target.value);
-		
-		const payload = new Uint8Array([this.servoU8]);
-		void this.messageSender?.send(0x0003, 0x0001, payload);
-	}
-
-	private handleModeChange(mode: SorterMode) {
-		if (this.selectedMode === mode) {
-			return;
-		}
-
-		this.selectedMode = mode;
-		const payload = new Uint8Array([mode]);
-		void this.messageSender?.send(0x0003, 0x0002, payload);
-	}
-
 	render() {
 		return html`
-			<div class="panel">
-				<div class="top-row">
+			<div class="panel app-panel">
+				<div class="panel-row">
 					<input
+						class="panel-input"
 						type="text"
 						placeholder="Teachable-Machine URL"
 						.value=${this.modelUrl}
@@ -160,48 +141,11 @@ export class SorterPanel extends LitElement {
 					<button @click=${this.loadModel}>Model laden</button>
 				</div>
 
-				<div class="status">${this.statusMessage}</div>
+				<div class="panel-text">${this.statusMessage}</div>
 
 				<div ${ref(this.webcamContainerRef)}></div>
 
 				<div ${ref(this.labelContainerRef)}></div>
-
-				<div class="mode-section">
-					<div class="mode-label">Betriebsmodus</div>
-					<div class="mode-buttons">
-						${this.modeOptions.map(
-							({ mode, label }) => html`
-								<button
-									type="button"
-									class="mode-btn ${this.selectedMode === mode ? "active" : ""}"
-									@click=${() => this.handleModeChange(mode)}
-									?disabled=${!this.deviceConnected}
-								>
-									${label}
-								</button>
-							`
-						)}
-					</div>
-				</div>
-
-				<div class="servo-section">
-					<div class="servo-label">Servo-Drehwinkel</div>
-					<div class="servo-controls">
-						<input
-							type="range"
-							class="servo-slider"
-							min="0"
-							max="255"
-							.value=${String(this.servoU8)}
-							@input=${this.handleServoChange}
-						/>
-						<div class="servo-value">
-							<span>0°</span>
-							<span style="font-weight: 600;">${Math.round(this.servoU8*180/255)}°</span>
-							<span>180°</span>
-						</div>
-					</div>
-				</div>
 			</div>
 		`;
 	}

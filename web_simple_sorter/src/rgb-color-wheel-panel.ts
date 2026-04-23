@@ -2,8 +2,8 @@ import { LitElement, html } from "lit";
 import { customElement, property } from "lit/decorators.js";
 import type { IMessageSender } from "./app.js";
 
-@customElement("rgb-color-wheel")
-export class RgbColorWheel extends LitElement {
+@customElement("rgb-color-wheel-panel")
+export class RgbColorWheelPanel extends LitElement {
 	protected createRenderRoot() {
 		return this;
 	}
@@ -189,64 +189,66 @@ export class RgbColorWheel extends LitElement {
 
 	render() {
 		return html`
-			<div class="container">
-				<div class="wheel">
-					<canvas
-						width="280"
-						height="280"
-						@click="${this.handleCanvasClick}"
-						?disabled="${!this.deviceConnected}"
-						style="${!this.deviceConnected
-							? "opacity: 0.5; cursor: not-allowed;"
-							: ""}"
-					></canvas>
-				</div>
-				<div class="slider-container">
-					<div class="slider-header">
-						<span>Lightness</span>
-						<span>${Math.round(this.lightness)}%</span>
+			<div class="panel app-panel">
+				<div class="container">
+					<div class="wheel">
+						<canvas
+							width="280"
+							height="280"
+							@click="${this.handleCanvasClick}"
+							?disabled="${!this.deviceConnected}"
+							style="${!this.deviceConnected
+								? "opacity: 0.5; cursor: not-allowed;"
+								: ""}"
+						></canvas>
 					</div>
-					<input
-						type="range"
-						min="0"
-						max="100"
-						step="1"
-						.value="${String(Math.round(this.lightness))}"
-						@input="${this.handleLightnessInput}"
-						?disabled="${!this.deviceConnected}"
-					/>
-				</div>
-				<div class="color-preview">
-					<div
-						class="preview-box"
-						style="background-color: rgb(${this.currentColor.r}, ${
-							this.currentColor.g
-						}, ${this.currentColor.b})"
-					></div>
-					<div class="color-values">
-						<div class="color-value">
-							<span class="label">R:</span>
-							<span>${this.currentColor.r}</span>
-						</div>
-						<div class="color-value">
-							<span class="label">G:</span>
-							<span>${this.currentColor.g}</span>
-						</div>
-						<div class="color-value">
-							<span class="label">B:</span>
-							<span>${this.currentColor.b}</span>
-						</div>
-						<div class="color-value">
-							<span class="label">H:</span>
-							<span>${Math.round(this.hue)}°</span>
-						</div>
-						<div class="color-value">
-							<span class="label">S:</span>
-							<span>${Math.round(this.saturation)}%</span>
-						</div>
-						<div class="color-value">
-							<span class="label">L:</span>
+					<div class="panel-controls slider-container">
+						<div class="panel-value-row panel-label">
+							<span>Lightness</span>
 							<span>${Math.round(this.lightness)}%</span>
+						</div>
+						<input
+							type="range"
+							min="0"
+							max="100"
+							step="1"
+							.value="${String(Math.round(this.lightness))}"
+							@input="${this.handleLightnessInput}"
+							?disabled="${!this.deviceConnected}"
+						/>
+					</div>
+					<div class="color-preview">
+						<div
+							class="preview-box"
+							style="background-color: rgb(${this.currentColor.r}, ${
+								this.currentColor.g
+							}, ${this.currentColor.b})"
+						></div>
+						<div class="panel-controls panel-value-list">
+							<div class="panel-value-row">
+								<span class="panel-muted-label">R:</span>
+								<span>${this.currentColor.r}</span>
+							</div>
+							<div class="panel-value-row">
+								<span class="panel-muted-label">G:</span>
+								<span>${this.currentColor.g}</span>
+							</div>
+							<div class="panel-value-row">
+								<span class="panel-muted-label">B:</span>
+								<span>${this.currentColor.b}</span>
+							</div>
+							<div class="panel-value-row">
+								<span class="panel-muted-label">H:</span>
+								<span>${Math.round(this.hue)}°</span>
+							</div>
+							<div class="panel-value-row">
+								<span class="panel-muted-label">S:</span>
+								<span>${Math.round(this.saturation)}%</span>
+							</div>
+							<div class="panel-value-row">
+								<span class="panel-muted-label">L:</span>
+								<span>${Math.round(this.lightness)}%</span>
+							</div>
 						</div>
 					</div>
 				</div>
@@ -257,6 +259,6 @@ export class RgbColorWheel extends LitElement {
 
 declare global {
 	interface HTMLElementTagNameMap {
-		"rgb-color-wheel": RgbColorWheel;
+		"rgb-color-wheel-panel": RgbColorWheelPanel;
 	}
 }

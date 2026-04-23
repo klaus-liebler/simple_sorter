@@ -2,8 +2,9 @@ import { LitElement, html } from "lit";
 import { customElement, state } from "lit/decorators.js";
 import "./styles.css";
 import "./connect-panel.js";
-import "./rgb-color-wheel.js";
+import "./rgb-color-wheel-panel.js";
 import "./sorter-panel.js";
+import "./servo_test_panel.js";
 import { UsbService } from "./usb.js";
 
 export interface IMessageSender {
@@ -45,28 +46,34 @@ export class Application extends LitElement {
 	render() {
 		return html`
 			<div class="container">
-				<div class="header-section">
+				<section class="header-section">
 					<connect-panel
 						.deviceConnected=${this.deviceConnected}
 						.statusMessage="${this.statusMessage}"
 						@request-device="${this.requestDevice}"
 						@disconnect-device="${this.disconnectDevice}"
 					></connect-panel>
-				</div>
+				</section>
 
-				<div class="header-section">
+				<section class="header-section">
 					<sorter-panel
-						.deviceConnected=${this.deviceConnected}
 						.messageSender=${this.messageSender}
 					></sorter-panel>
-				</div>
+				</section>
 
-				<div class="content-section">
-					<rgb-color-wheel
+				<section class="header-section">
+					<servo-test-panel
 						.deviceConnected=${this.deviceConnected}
 						.messageSender=${this.messageSender}
-					></rgb-color-wheel>
-				</div>
+					></servo-test-panel>
+				</section>
+
+				<section class="header-section">
+					<rgb-color-wheel-panel
+						.deviceConnected=${this.deviceConnected}
+						.messageSender=${this.messageSender}
+					></rgb-color-wheel-panel>
+				</section>
 			</div>
 		`;
 	}
