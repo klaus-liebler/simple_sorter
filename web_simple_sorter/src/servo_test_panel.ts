@@ -12,7 +12,7 @@ export class ServoTestPanel extends LitElement {
 	@property({ type: Boolean }) accessor deviceConnected = false;
 	@property() accessor messageSender: IMessageSender | undefined;
 
-	@state() private accessor servoU8 = 90;
+	@state() private accessor servoU8 = 128;
 	@state() private accessor selectedMode = SorterMode.NO_DYNAMICS;
 
 	private readonly modeOptions: Array<{ mode: SorterMode; label: string }> = [

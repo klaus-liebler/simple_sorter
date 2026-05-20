@@ -10,10 +10,18 @@ type SorterClassResult = {
 	label: string;
 	confidence: number;
 };
+enum TargetClass {
+	LEFT=0,
+	RIGHT=1,
+	NONE=2
+};
 
 @customElement("sorter-panel")
 export class SorterPanel extends LitElement {
-	private static readonly DEFAULT_MODEL_URL = "https://teachablemachine.withgoogle.com/models/Wq-djWmcV/";
+	private static readonly DEFAULT_MODEL_URL = "https://teachablemachine.withgoogle.com/models/UWp0-4g0k/";
+	private static readonly WIGGLE_DURATION_MS = 2000;
+	private static readonly CENTER_SETTLE_MS = 250;
+	private static readonly DROP_SETTLE_MS = 1200;
 
 	protected createRenderRoot() {
 		return this;
@@ -25,22 +33,23 @@ export class SorterPanel extends LitElement {
 
 	@state() private accessor statusMessage = "Model nicht geladen";
 	
-	@state() private accessor modelLoaded = false;
 	@state() private accessor leftClassPercent = 0;
 	@state() private accessor rightClassPercent = 0;
 	@state() private accessor lastDropSide: "left" | "right" | null = null;
 
 	private model:tmImage.CustomMobileNet|null=null;
+	private indexOfRightClass:number=-1;
+	private indexOfLeftClass:number=-1;
 	private webcam:tmImage.Webcam|null=null;
 	private webcamContainerRef: Ref<HTMLDivElement> = createRef();
 	private labelContainerRef: Ref<HTMLDivElement> = createRef();
-	private maxPredictions=0;
-	private lastCommandSentAt = 0;
-	private predictionLoopRunning = false;
 	private dropAnimationTimeout: ReturnType<typeof setTimeout> | undefined;
+	private decisionLoopTimeout: ReturnType<typeof setTimeout> | undefined;
+	private decisionLoopRunning = false;
 
 	firstUpdated() {
-		void this.ensureWebcamStarted();
+		this.ensureWebcamStarted();
+		window.requestAnimationFrame(()=>{this.onAnimationFrame()});
 	}
 
 	private onModelInput(event: Event) {
@@ -48,8 +57,8 @@ export class SorterPanel extends LitElement {
 		this.modelUrl = target.value;
 	}
 
-	private triggerDropAnimation(side: "left" | "right") {
-		this.lastDropSide = side;
+	private triggerDropAnimation(side: TargetClass) {
+		this.lastDropSide = side === TargetClass.LEFT ? "left" : "right";
 		if (this.dropAnimationTimeout) {
 			clearTimeout(this.dropAnimationTimeout);
 		}
@@ -58,72 +67,91 @@ export class SorterPanel extends LitElement {
 		}, 900);
 	}
 
-	private async sendLedForPrediction(prediction: Array<{ probability: number }>) {
-		const class0Probability = prediction[0]?.probability ?? 0;
-		const class1Probability = prediction[1]?.probability ?? 0;
+	private async setServoMode(mode: SorterMode) {
+		await this.messageSender?.send(0x0003, 0x0002, new Uint8Array([mode]));
+	}
 
-		let targetClass: number=-1;
-		if (class0Probability > 0.9) {
-			targetClass = 0;
-		} else if (class1Probability > 0.9) {
-			targetClass = 1;
+	private async setServoPosition(position: number) {
+		await this.messageSender?.send(0x0003, 0x0001, new Uint8Array([position]));
+	}
+
+	private async setLed(left: number, right: number, blue = 0) {
+		await this.messageSender?.send(0x0002, 0x0001, new Uint8Array([left, right, blue]));
+	}
+
+	private sleep(ms: number) {
+		return new Promise((resolve) => setTimeout(resolve, ms));
+	}
+
+	private scheduleNextDecision(delayMs: number) {
+		if (this.decisionLoopTimeout) {
+			clearTimeout(this.decisionLoopTimeout);
 		}
+		this.decisionLoopTimeout = setTimeout(() => {
+			void this.runDecisionCycle();
+		}, delayMs);
+	}
 
-		const now = Date.now();
-		if (
-			targetClass === -1 ||
-			now - this.lastCommandSentAt < 2000
-		) {
+	private async runDecisionCycle() {
+		if (!this.decisionLoopRunning || !this.model || !this.webcam || !this.messageSender) {
 			return;
 		}
 
-		const payloadLED =
-			targetClass === 0
-				? new Uint8Array([255, 0, 0])
-				: new Uint8Array([0, 255, 0]);
+		await this.setServoMode(SorterMode.WIGGLE);
+		await this.sleep(SorterPanel.WIGGLE_DURATION_MS);
 
-		await this.messageSender?.send(0x0002, 0x0001, payloadLED);
-		let sm:SorterMode=SorterMode.NO_DYNAMICS;
-		if(targetClass === 0) {
-			sm=SorterMode.RIGHT;
-		}else if(targetClass === 1) {
-			sm=SorterMode.LEFT;
+		if (!this.decisionLoopRunning || !this.model || !this.webcam || !this.messageSender) {
+			return;
 		}
 
-		const payloadServo = new Uint8Array([sm]);
-		await this.messageSender?.send(0x0003, 0x0002, payloadServo);
-		this.triggerDropAnimation(targetClass === 0 ? "left" : "right");
-		this.lastCommandSentAt = now;
+		await this.setServoMode(SorterMode.NO_DYNAMICS);
+		await this.setServoPosition(127);
+		await this.sleep(SorterPanel.CENTER_SETTLE_MS);
+
+		if (!this.decisionLoopRunning || !this.model || !this.webcam || !this.messageSender) {
+			return;
+		}
+
+		const prediction = await this.model.predict(this.webcam.canvas);
+		this.leftClassPercent = Math.max(0, Math.min(100, (prediction[this.indexOfLeftClass]?.probability ?? 0) * 100));
+		this.rightClassPercent = Math.max(0, Math.min(100, (prediction[this.indexOfRightClass]?.probability ?? 0) * 100));
+
+		let targetClass: TargetClass = TargetClass.NONE;
+		if (this.leftClassPercent > 90) {
+			targetClass = TargetClass.LEFT;
+		} else if (this.rightClassPercent > 90) {
+			targetClass = TargetClass.RIGHT;
+		}
+
+		if (targetClass === TargetClass.LEFT) {
+			await this.setLed(255, 0, 0);
+			await this.setServoMode(SorterMode.LEFT);
+			this.triggerDropAnimation(targetClass);
+			this.scheduleNextDecision(SorterPanel.DROP_SETTLE_MS);
+			return;
+		}
+
+		if (targetClass === TargetClass.RIGHT) {
+			await this.setLed(0, 255, 0);
+			await this.setServoMode(SorterMode.RIGHT);
+			this.triggerDropAnimation(targetClass);
+			this.scheduleNextDecision(SorterPanel.DROP_SETTLE_MS);
+			return;
+		}
+
+		await this.setLed(0, 0, 0);
+		this.scheduleNextDecision(0);
 	}
 
 
 	private async  onAnimationFrame() {
-		if (!this.model || !this.webcam) {
-			this.predictionLoopRunning = false;
-			return;
+		if (this.webcam) {
+			this.webcam.update();
 		}
-
-        this.webcam?.update(); // update the webcam frame
-        const prediction = await this.model!.predict(this.webcam!.canvas)!;
-        for (let i = 0; i < this.maxPredictions; i++) {
-            const classPrediction =prediction[i]!.className + ": " + prediction[i]!.probability.toFixed(2);
-			const row = this.labelContainerRef.value!.children[i];
-			if (row instanceof HTMLElement) {
-				row.innerHTML = classPrediction;
-			}
-        }
-		this.leftClassPercent = Math.max(0, Math.min(100, (prediction[0]?.probability ?? 0) * 100));
-		this.rightClassPercent = Math.max(0, Math.min(100, (prediction[1]?.probability ?? 0) * 100));
-		await this.sendLedForPrediction(prediction);
-		
-        window.requestAnimationFrame(()=>{this.onAnimationFrame()});
+		window.requestAnimationFrame(()=>{this.onAnimationFrame()});
     }
 
 	private async ensureWebcamStarted() {
-		if (this.webcam) {
-			return;
-		}
-
 		try {
 			const flip = true;
 			this.webcam = new tmImage.Webcam(200, 200, flip);
@@ -131,6 +159,7 @@ export class SorterPanel extends LitElement {
 			await this.webcam.play();
 			this.webcamContainerRef.value?.replaceChildren(this.webcam.canvas);
 		} catch {
+			this.webcam = null;
 			this.statusMessage = "Kamerazugriff fehlgeschlagen";
 		}
 	}
@@ -140,18 +169,12 @@ export class SorterPanel extends LitElement {
 			this.statusMessage = "Bitte erst verbinden";
 			return;
 		}
-
-		await this.ensureWebcamStarted();
-		if (!this.webcam) {
-			return;
-		}
-
+		
 		if (!this.modelUrl.trim()) {
 			this.statusMessage = "Bitte eine Model-URL eintragen";
 			return;
-		}
+		}		
 
-		
 		const modelURL = this.modelUrl + "model.json";
         const metadataURL = this.modelUrl + "metadata.json";
 
@@ -160,19 +183,25 @@ export class SorterPanel extends LitElement {
         // or files from your local hard drive
         // Note: the pose library adds "tmImage" object to your window (window.tmImage)
         this.model = await tmImage.load(modelURL, metadataURL);
-		this.modelLoaded = true;
-		this.statusMessage = "Model geladen";
-        this.maxPredictions = this.model.getTotalClasses();
-		this.lastCommandSentAt = 0;
+
+		this.decisionLoopRunning = false;
+		if (this.decisionLoopTimeout) {
+			clearTimeout(this.decisionLoopTimeout);
+			this.decisionLoopTimeout = undefined;
+		}
 		this.leftClassPercent = 0;
 		this.rightClassPercent = 0;
 		this.labelContainerRef.value!.innerHTML = "";
-
-
-		if (!this.predictionLoopRunning) {
-			this.predictionLoopRunning = true;
-			window.requestAnimationFrame(()=>{this.onAnimationFrame()});
+		this.indexOfLeftClass=this.model.getClassLabels().indexOf("Links");
+		this.indexOfRightClass=this.model.getClassLabels().indexOf("Rechts");
+		if(this.indexOfLeftClass===-1 || this.indexOfRightClass===-1) {
+			this.statusMessage = "Das geladene Modell hat nicht die Klassen 'Links' und 'Rechts'";
+			this.model=null;
+			return;
 		}
+		this.statusMessage = "Model geladen";
+		this.decisionLoopRunning = true;
+		this.scheduleNextDecision(0);
 	}
 
 	render() {
@@ -196,9 +225,7 @@ export class SorterPanel extends LitElement {
 				<div class="sorter-webcam" ${ref(this.webcamContainerRef)}></div>
 
 				<div class="sorter-prediction-row">
-					<div
-						class=${`sorter-drop-indicator sorter-drop-indicator-left ${this.lastDropSide === "left" ? "sorter-drop-indicator-fired" : ""}`}
-					>
+					<div class=${`sorter-drop-indicator sorter-drop-indicator-left ${this.lastDropSide === "left" ? "sorter-drop-indicator-fired" : ""}`}>
 						ABWURF
 					</div>
 					<div
