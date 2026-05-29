@@ -32,7 +32,7 @@
 #include "listener/servo_message_processor.hh"
 #include "usb_descriptors.h"
 
-#define URL "liebler.iui.hs-osnabrueck.de/rgb/"
+#define URL "liebler.iui.hs-osnabrueck.de/simplesorter/"
 constexpr char MONITOR_LOG_TAG[] = "monitor";
 constexpr gpio_num_t BUTTON_PIN{GPIO_NUM_0};
 constexpr int BUTTON_STATE_ACTIVE{0};

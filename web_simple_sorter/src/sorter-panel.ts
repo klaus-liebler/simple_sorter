@@ -18,7 +18,8 @@ enum TargetClass {
 
 @customElement("sorter-panel")
 export class SorterPanel extends LitElement {
-	private static readonly DEFAULT_MODEL_URL = "https://teachablemachine.withgoogle.com/models/UWp0-4g0k/";
+	//private static readonly DEFAULT_MODEL_URL = "https://teachablemachine.withgoogle.com/models/UWp0-4g0k/";
+	private static readonly DEFAULT_MODEL_URL = "https://teachablemachine.withgoogle.com/models/mCrofsz8f/";
 	private static readonly WIGGLE_DURATION_MS = 2000;
 	private static readonly CENTER_SETTLE_MS = 250;
 	private static readonly DROP_SETTLE_MS = 1200;

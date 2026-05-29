@@ -13,6 +13,7 @@ namespace listener
     static constexpr ledc_timer_t kLedcTimer = LEDC_TIMER_0;
     static constexpr ledc_channel_t kLedcChannel = LEDC_CHANNEL_0;
     static constexpr ledc_timer_bit_t kLedcResolution = LEDC_TIMER_14_BIT;
+    
     static constexpr uint32_t kLedcFrequencyHz = 50;
     static constexpr uint32_t kServoPulseMinUs = 500;   // SG90: -90 degrees
     static constexpr uint32_t kServoPulseMaxUs = 2500;  // SG90: +90 degrees
