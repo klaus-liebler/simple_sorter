@@ -20,40 +20,35 @@ public:
 private:
   gpio_num_t servo_pin_;
 
-  enum class eDynamicMode {
-    NO_DYNAMICS   = 0,
-    RIGHT  = 1,
-    WIGGLE = 2,
-    LEFT   = 3,
-  };
-  enum class eDropSequencePhase {
-    IDLE = 0,
-    RAMP_TO_TARGET = 1,
-    HOLD_AT_TARGET = 2,
-    RAMP_BACK = 3,
+  enum class eMode {
+    SET_POSITION = 0,
+    WIGGLE = 1,
   };
 
-  eDynamicMode currentDynamicMode = eDynamicMode::NO_DYNAMICS;
-  uint8_t currentPosition = 128;
+  eMode current_mode_ = eMode::SET_POSITION;
+  uint8_t set_position_target_ = 128;
   uint8_t appliedPosition_ = 0;
+  uint32_t move_time_for_180_ms_ = 0;
 
-  uint8_t  wiggle_pos_     = 60;
+  uint8_t wiggle_min_ = 60;
+  uint8_t wiggle_max_ = 60;
+  uint8_t wiggle_next_target_ = 60;
+  uint32_t wiggle_time_for_180_ms_ = 0;
   uint32_t wiggle_next_ms_ = 0;
-  uint32_t last_dynamic_mode_set_ms= 0;
-
-  bool command_lock_active_ = false;
   bool has_applied_position_ = false;
-  eDropSequencePhase drop_sequence_phase_ = eDropSequencePhase::IDLE;
-  uint8_t drop_start_position_ = 128;
-  uint8_t drop_target_position_ = 128;
-  uint32_t drop_phase_start_ms_ = 0;
+
+  bool move_active_ = false;
+  uint8_t move_start_position_ = 128;
+  uint8_t move_target_position_ = 128;
+  uint32_t move_start_ms_ = 0;
+  uint32_t move_duration_ms_ = 0;
 
   void SetPosition(uint8_t position);
-  void ArmWiggle(uint32_t now_ms);
-  void StartDropSequence(eDynamicMode mode, uint32_t now_ms);
-  void UpdateDropSequence(uint32_t now_ms);
+  void StartMoveTo(uint8_t target_position, uint32_t time_for_180_ms, uint32_t now_ms);
+  bool UpdateMove(uint32_t now_ms);
+  void ArmWiggle(uint8_t wiggle_min, uint8_t wiggle_max, uint32_t time_for_180_ms, uint32_t now_ms);
   void HandleSetPosition(ISendBackInterface& context, uint16_t message_id, const uint8_t* payload);
-  void HandleDynamicMessage(ISendBackInterface& context, uint16_t message_id, const uint8_t* payload);
+  void HandleWiggle(ISendBackInterface& context, uint16_t message_id, const uint8_t* payload);
   void Loop(ISendBackInterface& context, uint32_t now_ms) override;
 };
 

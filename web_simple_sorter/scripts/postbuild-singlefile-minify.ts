@@ -36,6 +36,66 @@ function skipLineComment(code: string, startIndex: number): number {
 	return i;
 }
 
+function skipRegexLiteral(code: string, startIndex: number): number {
+	let i = startIndex + 1;
+	let inCharClass = false;
+
+	while (i < code.length) {
+		const ch = code[i];
+		if (ch === "\\") {
+			i += 2;
+			continue;
+		}
+		if (ch === "[") {
+			inCharClass = true;
+			i += 1;
+			continue;
+		}
+		if (ch === "]") {
+			inCharClass = false;
+			i += 1;
+			continue;
+		}
+		if (ch === "/" && !inCharClass) {
+			i += 1;
+			while (i < code.length && /[A-Za-z]/.test(code[i]!)) i += 1;
+			return i;
+		}
+		i += 1;
+	}
+
+	return i;
+}
+
+function canStartRegexLiteral(code: string, slashIndex: number): boolean {
+	let i = slashIndex - 1;
+	while (i >= 0 && /\s/.test(code[i]!)) i -= 1;
+	if (i < 0) return true;
+
+	const prev = code[i]!;
+	if ("([{:;,=!&|?+-*%^~<>".includes(prev)) return true;
+
+	let end = i;
+	while (i >= 0 && /[A-Za-z_$]/.test(code[i]!)) i -= 1;
+	if (i !== end) {
+		const word = code.slice(i + 1, end + 1);
+		if (
+			word === "return" ||
+			word === "throw" ||
+			word === "case" ||
+			word === "delete" ||
+			word === "void" ||
+			word === "typeof" ||
+			word === "instanceof" ||
+			word === "in"
+		) {
+			return true;
+		}
+	}
+
+	return false;
+}
+
 function skipTemplateLiteral(code: string, startIndex: number): number {
 	let i = startIndex + 1;
 	while (i < code.length) {
@@ -69,6 +129,11 @@ function skipJsExpression(code: string, startIndex: number): number {
 
 		if (ch === "/" && next === "*") {
 			i = skipBlockComment(code, i);
+			continue;
+		}
+
+		if (ch === "/" && next !== "*" && next !== "/" && canStartRegexLiteral(code, i)) {
+			i = skipRegexLiteral(code, i);
 			continue;
 		}
 
@@ -137,6 +202,14 @@ function minifyCssFragment(cssText: string): string {
 		.trim();
 }
 
+function minifyHtmlFragment(htmlText: string): string {
+	return htmlText
+		.replace(/[\r\n\t]+/g, " ")
+		.replace(/>\s+</g, "><")
+		.replace(/\s{2,}/g, " ")
+		.trim();
+}
+
 async function minifyTemplateByTag(
 	tagName: string,
 	parts: string[],
@@ -148,17 +221,21 @@ async function minifyTemplateByTag(
 		withPlaceholders += placeholders[i] + (parts[i + 1] ?? "");
 	}
 
+	const looksLikeHtmlTemplate = (literal: string): boolean => {
+		const trimmed = literal.trim();
+		return /<\/?[A-Za-z][\w:-]*(\s|\/?>)/.test(trimmed);
+	};
+
 	let minifiedLiteral: string;
-	if (tagName === "P") {
-		minifiedLiteral = await minifyHtml(withPlaceholders, {
-			collapseWhitespace: true,
-			collapseInlineTagWhitespace: true,
-			removeComments: true,
-			caseSensitive: true,
-			minifyCSS: true
-		});
-	} else {
+	const shouldMinifyCss = tagName === "css" || tagName === "P";
+	const shouldMinifyHtml = tagName === "html" || tagName === "o" || looksLikeHtmlTemplate(withPlaceholders);
+
+	if (shouldMinifyCss) {
 		minifiedLiteral = minifyCssFragment(withPlaceholders);
+	} else if (shouldMinifyHtml) {
+		minifiedLiteral = minifyHtmlFragment(withPlaceholders);
+	} else {
+		minifiedLiteral = withPlaceholders;
 	}
 
 	let rebuilt = minifiedLiteral;
@@ -172,35 +249,92 @@ async function minifyTemplateByTag(
 async function minifyLitTaggedTemplates(scriptCode: string): Promise<string> {
 	let result = "";
 	let i = 0;
+	const isIdentStart = (char: string): boolean => /[A-Za-z_$]/.test(char);
 
 	while (i < scriptCode.length) {
 		const ch = scriptCode[i]!;
-		if (ch !== "o" && ch !== "P") {
-			result += ch;
-			i += 1;
+
+		if (ch === '"' || ch === "'") {
+			const end = skipQuotedString(scriptCode, i, ch);
+			result += scriptCode.slice(i, end);
+			i = end;
+			continue;
+		}
+
+		if (ch === "/" && scriptCode[i + 1] === "*") {
+			const end = skipBlockComment(scriptCode, i);
+			result += scriptCode.slice(i, end);
+			i = end;
+			continue;
+		}
+
+		if (ch === "/" && scriptCode[i + 1] === "/") {
+			const end = skipLineComment(scriptCode, i);
+			result += scriptCode.slice(i, end);
+			i = end;
+			continue;
+		}
+
+		if (ch === "`") {
+			const end = skipTemplateLiteral(scriptCode, i);
+			result += scriptCode.slice(i, end);
+			i = end;
 			continue;
 		}
 
 		const prev = scriptCode[i - 1] ?? "";
-		const next = scriptCode[i + 1] ?? "";
-		if ((prev && isIdentChar(prev)) || next !== "`") {
-			result += ch;
-			i += 1;
+		if (isIdentStart(ch) && (!prev || !isIdentChar(prev))) {
+			let endIdent = i + 1;
+			while (endIdent < scriptCode.length && isIdentChar(scriptCode[endIdent]!)) {
+				endIdent += 1;
+			}
+
+			const ident = scriptCode.slice(i, endIdent);
+			if (scriptCode[endIdent] === "`") {
+				const parsed = parseTaggedTemplate(scriptCode, endIdent);
+				if (parsed) {
+					const template = await minifyTemplateByTag(ident, parsed.parts, parsed.expressions);
+					result += ident + template;
+					i = parsed.endIndex;
+					continue;
+				}
+			}
+
+			result += ident;
+			i = endIdent;
 			continue;
 		}
 
-		const parsed = parseTaggedTemplate(scriptCode, i + 1);
-		if (!parsed) {
-			result += ch;
-			i += 1;
-			continue;
-		}
-
-		const template = await minifyTemplateByTag(ch, parsed.parts, parsed.expressions);
-		result += ch + template;
-		i = parsed.endIndex;
+		result += ch;
+		i += 1;
 	}
 
+	return result;
+}
+
+async function minifyRenderMethodTemplates(scriptCode: string): Promise<string> {
+	const renderTemplatePattern = /render\(\)\{return\s+([A-Za-z_$][A-Za-z0-9_$]*)`/g;
+	let result = "";
+	let lastIndex = 0;
+	let match: RegExpExecArray | null;
+
+	while ((match = renderTemplatePattern.exec(scriptCode)) !== null) {
+		const tagName = match[1]!;
+		const backtickIndex = renderTemplatePattern.lastIndex - 1;
+		const tagStart = backtickIndex - tagName.length;
+		const parsed = parseTaggedTemplate(scriptCode, backtickIndex);
+
+		if (!parsed) continue;
+
+		result += scriptCode.slice(lastIndex, tagStart);
+		const minifiedTemplate = await minifyTemplateByTag("html", parsed.parts, parsed.expressions);
+		result += tagName + minifiedTemplate;
+
+		lastIndex = parsed.endIndex;
+		renderTemplatePattern.lastIndex = parsed.endIndex;
+	}
+
+	result += scriptCode.slice(lastIndex);
 	return result;
 }
 
@@ -216,7 +350,7 @@ async function minifyInlineModuleScripts(htmlSource: string): Promise<string> {
 		const scriptCode = match[2] ?? "";
 		const start = match.index;
 		const end = start + fullMatch.length;
-		const isModule = /\btype\s*=\s*"module"/i.test(attrs);
+		const isModule = /\btype\s*=\s*(?:"module"|'module'|module)(?=\s|$)/i.test(attrs);
 
 		result += htmlSource.slice(lastIndex, start);
 
@@ -227,8 +361,9 @@ async function minifyInlineModuleScripts(htmlSource: string): Promise<string> {
 		}
 
 		const literalMinifiedCode = await minifyLitTaggedTemplates(scriptCode);
+		const renderTemplateMinifiedCode = await minifyRenderMethodTemplates(literalMinifiedCode);
 
-		const jsMinified = await minifyJs(literalMinifiedCode, {
+		const jsMinified = await minifyJs(renderTemplateMinifiedCode, {
 			ecma: 2020,
 			module: true,
 			compress: { passes: 2 },
@@ -236,7 +371,7 @@ async function minifyInlineModuleScripts(htmlSource: string): Promise<string> {
 			format: { comments: false }
 		});
 
-		const finalScriptCode = jsMinified.code ?? literalMinifiedCode;
+		const finalScriptCode = jsMinified.code ?? renderTemplateMinifiedCode;
 		result += `<script${attrs}>${finalScriptCode}</script>`;
 		lastIndex = end;
 	}
