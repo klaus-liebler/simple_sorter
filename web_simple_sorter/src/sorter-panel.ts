@@ -3,13 +3,9 @@ import { customElement, property, state } from "lit/decorators.js";
 import { createRef, ref } from "lit-html/directives/ref.js";
 import type { Ref } from "lit-html/directives/ref.js";
 import type { IMessageSender } from "./app.js";
-import  { SorterMode } from "./SorterMode.ts";
 import * as tmImage from "@teachablemachine/image";
 
-type SorterClassResult = {
-	label: string;
-	confidence: number;
-};
+
 enum TargetClass {
 	LEFT=0,
 	RIGHT=1,
@@ -20,8 +16,17 @@ enum TargetClass {
 export class SorterPanel extends LitElement {
 	private static readonly DEFAULT_MODEL_URL = "https://teachablemachine.withgoogle.com/models/UWp0-4g0k/";
 	private static readonly WIGGLE_DURATION_MS = 2000;
-	private static readonly CENTER_SETTLE_MS = 250;
+	private static readonly WIGGLE_MIN = 80 * 255 / 180;
+	private static readonly WIGGLE_MAX = 100 * 255 / 180;
+	private static readonly WIGGLE_TIME_FOR_180_MS = 700;
+	private static readonly CENTER_POSITION = 127;
+	private static readonly LEFT_DROP_POSITION = 255;
+	private static readonly RIGHT_DROP_POSITION = 0;
+	private static readonly DROP_TIME_FOR_180_MS = 700;
+	private static readonly CENTER_TIME_FOR_180_MS = 700;
+	private static readonly CENTER_SETTLE_MS = 400;
 	private static readonly DROP_SETTLE_MS = 1200;
+	private static readonly MINIMUM_PROBABILITY_PERCENT_FOR_DECISION = 90;
 
 	protected createRenderRoot() {
 		return this;
@@ -67,12 +72,26 @@ export class SorterPanel extends LitElement {
 		}, 900);
 	}
 
-	private async setServoMode(mode: SorterMode) {
-		await this.messageSender?.send(0x0003, 0x0002, new Uint8Array([mode]));
+	private encodeU16Le(value: number) {
+		const clamped = Math.max(0, Math.min(0xffff, Math.round(value)));
+		return [clamped & 0xff, (clamped >> 8) & 0xff];
 	}
 
-	private async setServoPosition(position: number) {
-		await this.messageSender?.send(0x0003, 0x0001, new Uint8Array([position]));
+	private async setServoWiggle(wiggleMin: number, wiggleMax: number, timeFor180degInMs: number) {
+		const payload = new Uint8Array([
+			Math.max(0, Math.min(255, Math.round(wiggleMin))),
+			Math.max(0, Math.min(255, Math.round(wiggleMax))),
+			...this.encodeU16Le(timeFor180degInMs),
+		]);
+		await this.messageSender?.send(0x0003, 0x0002, payload);
+	}
+
+	private async setServoPosition(position: number, timeFor180degInMs: number) {
+		const payload = new Uint8Array([
+			Math.max(0, Math.min(255, Math.round(position))),
+			...this.encodeU16Le(timeFor180degInMs),
+		]);
+		await this.messageSender?.send(0x0003, 0x0001, payload);
 	}
 
 	private async setLed(left: number, right: number, blue = 0) {
@@ -97,15 +116,18 @@ export class SorterPanel extends LitElement {
 			return;
 		}
 
-		await this.setServoMode(SorterMode.WIGGLE);
+		await this.setServoWiggle(
+			SorterPanel.WIGGLE_MIN,
+			SorterPanel.WIGGLE_MAX,
+			SorterPanel.WIGGLE_TIME_FOR_180_MS,
+		);
 		await this.sleep(SorterPanel.WIGGLE_DURATION_MS);
 
 		if (!this.decisionLoopRunning || !this.model || !this.webcam || !this.messageSender) {
 			return;
 		}
 
-		await this.setServoMode(SorterMode.NO_DYNAMICS);
-		await this.setServoPosition(127);
+		await this.setServoPosition(SorterPanel.CENTER_POSITION, SorterPanel.CENTER_TIME_FOR_180_MS);
 		await this.sleep(SorterPanel.CENTER_SETTLE_MS);
 
 		if (!this.decisionLoopRunning || !this.model || !this.webcam || !this.messageSender) {
@@ -117,24 +139,28 @@ export class SorterPanel extends LitElement {
 		this.rightClassPercent = Math.max(0, Math.min(100, (prediction[this.indexOfRightClass]?.probability ?? 0) * 100));
 
 		let targetClass: TargetClass = TargetClass.NONE;
-		if (this.leftClassPercent > 90) {
+		if (this.leftClassPercent > SorterPanel.MINIMUM_PROBABILITY_PERCENT_FOR_DECISION) {
 			targetClass = TargetClass.LEFT;
-		} else if (this.rightClassPercent > 90) {
+		} else if (this.rightClassPercent > SorterPanel.MINIMUM_PROBABILITY_PERCENT_FOR_DECISION) {
 			targetClass = TargetClass.RIGHT;
 		}
 
 		if (targetClass === TargetClass.LEFT) {
 			await this.setLed(255, 0, 0);
-			await this.setServoMode(SorterMode.LEFT);
+			await this.setServoPosition(SorterPanel.LEFT_DROP_POSITION, SorterPanel.DROP_TIME_FOR_180_MS);
 			this.triggerDropAnimation(targetClass);
+			await this.sleep(SorterPanel.DROP_SETTLE_MS);
+			await this.setServoPosition(SorterPanel.CENTER_POSITION, SorterPanel.CENTER_TIME_FOR_180_MS);
 			this.scheduleNextDecision(SorterPanel.DROP_SETTLE_MS);
 			return;
 		}
 
 		if (targetClass === TargetClass.RIGHT) {
 			await this.setLed(0, 255, 0);
-			await this.setServoMode(SorterMode.RIGHT);
+			await this.setServoPosition(SorterPanel.RIGHT_DROP_POSITION, SorterPanel.DROP_TIME_FOR_180_MS);
 			this.triggerDropAnimation(targetClass);
+			await this.sleep(SorterPanel.DROP_SETTLE_MS);
+			await this.setServoPosition(SorterPanel.CENTER_POSITION, SorterPanel.CENTER_TIME_FOR_180_MS);
 			this.scheduleNextDecision(SorterPanel.DROP_SETTLE_MS);
 			return;
 		}
