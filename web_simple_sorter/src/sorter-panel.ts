@@ -12,6 +12,8 @@ enum TargetClass {
 	NONE=2
 };
 
+type SorterOperationMode = "sort" | "training";
+
 @customElement("sorter-panel")
 export class SorterPanel extends LitElement {
 	private static readonly DEFAULT_MODEL_URL = "https://teachablemachine.withgoogle.com/models/UWp0-4g0k/";
@@ -19,7 +21,7 @@ export class SorterPanel extends LitElement {
 	private static readonly WIGGLE_MIN = 80 * 255 / 180;
 	private static readonly WIGGLE_MAX = 100 * 255 / 180;
 	private static readonly WIGGLE_TIME_FOR_180_MS = 700;
-	private static readonly CENTER_POSITION = 127;
+	private static readonly DEFAULT_CENTER_POSITION = 127;
 	private static readonly LEFT_DROP_POSITION = 255;
 	private static readonly RIGHT_DROP_POSITION = 0;
 	private static readonly DROP_TIME_FOR_180_MS = 700;
@@ -41,6 +43,8 @@ export class SorterPanel extends LitElement {
 	@state() private accessor leftClassPercent = 0;
 	@state() private accessor rightClassPercent = 0;
 	@state() private accessor lastDropSide: "left" | "right" | null = null;
+	@state() private accessor operationMode: SorterOperationMode = "sort";
+	@state() private accessor centerCalibration = SorterPanel.DEFAULT_CENTER_POSITION;
 
 	private model:tmImage.CustomMobileNet|null=null;
 	private indexOfRightClass:number=-1;
@@ -62,6 +66,18 @@ export class SorterPanel extends LitElement {
 		this.modelUrl = target.value;
 	}
 
+	private onModeInput(event: Event) {
+		const target = event.target as HTMLSelectElement;
+		this.operationMode = target.value === "sort" ? "sort" : "training";
+		void this.applyCurrentMode();
+	}
+
+	private onCenterCalibrationInput(event: Event) {
+		const target = event.target as HTMLInputElement;
+		const parsed = Number.parseInt(target.value, 10);
+		this.centerCalibration = this.clampServoValue(Number.isNaN(parsed) ? SorterPanel.DEFAULT_CENTER_POSITION : parsed);
+	}
+
 	private triggerDropAnimation(side: TargetClass) {
 		this.lastDropSide = side === TargetClass.LEFT ? "left" : "right";
 		if (this.dropAnimationTimeout) {
@@ -75,6 +91,69 @@ export class SorterPanel extends LitElement {
 	private encodeU16Le(value: number) {
 		const clamped = Math.max(0, Math.min(0xffff, Math.round(value)));
 		return [clamped & 0xff, (clamped >> 8) & 0xff];
+	}
+
+	private clampServoValue(value: number) {
+		return Math.max(0, Math.min(255, Math.round(value)));
+	}
+
+	private stopDecisionLoop() {
+		this.decisionLoopRunning = false;
+		if (this.decisionLoopTimeout) {
+			clearTimeout(this.decisionLoopTimeout);
+			this.decisionLoopTimeout = undefined;
+		}
+	}
+
+	private getCenterPosition() {
+		return this.clampServoValue(this.centerCalibration);
+	}
+
+	private getWiggleRange() {
+		const defaultCenter = SorterPanel.DEFAULT_CENTER_POSITION;
+		const minOffset = SorterPanel.WIGGLE_MIN - defaultCenter;
+		const maxOffset = SorterPanel.WIGGLE_MAX - defaultCenter;
+		const center = this.getCenterPosition();
+		const wiggleMin = this.clampServoValue(center + minOffset);
+		const wiggleMax = this.clampServoValue(center + maxOffset);
+		return {
+			wiggleMin: Math.min(wiggleMin, wiggleMax),
+			wiggleMax: Math.max(wiggleMin, wiggleMax),
+		};
+	}
+
+	private getDropPosition(targetClass: TargetClass) {
+		const defaultCenter = SorterPanel.DEFAULT_CENTER_POSITION;
+		const center = this.getCenterPosition();
+		if (targetClass === TargetClass.LEFT) {
+			const leftOffset = SorterPanel.LEFT_DROP_POSITION - defaultCenter;
+			return this.clampServoValue(center + leftOffset);
+		}
+		if (targetClass === TargetClass.RIGHT) {
+			const rightOffset = SorterPanel.RIGHT_DROP_POSITION - defaultCenter;
+			return this.clampServoValue(center + rightOffset);
+		}
+		return center;
+	}
+
+	private async applyCurrentMode() {
+		if (!this.model || !this.webcam || !this.messageSender) {
+			return;
+		}
+
+		if (this.operationMode === "training") {
+			this.stopDecisionLoop();
+			await this.setLed(0, 0, 0);
+			await this.setServoPosition(this.getCenterPosition(), SorterPanel.CENTER_TIME_FOR_180_MS);
+			this.statusMessage = "Model geladen (Aus/Training)";
+			this.scheduleNextDecision(0);
+			return;
+		}
+
+		this.stopDecisionLoop();
+		this.decisionLoopRunning = true;
+		this.statusMessage = "Model geladen (Sortieren)";
+		this.scheduleNextDecision(0);
 	}
 
 	private async setServoWiggle(wiggleMin: number, wiggleMax: number, timeFor180degInMs: number) {
@@ -112,25 +191,39 @@ export class SorterPanel extends LitElement {
 	}
 
 	private async runDecisionCycle() {
-		if (!this.decisionLoopRunning || !this.model || !this.webcam || !this.messageSender) {
+		if (!this.model || !this.webcam || !this.messageSender) {
 			return;
 		}
 
+		if (this.operationMode === "training") {
+			const prediction = await this.model.predict(this.webcam.canvas);
+			this.leftClassPercent = Math.max(0, Math.min(100, (prediction[this.indexOfLeftClass]?.probability ?? 0) * 100));
+			this.rightClassPercent = Math.max(0, Math.min(100, (prediction[this.indexOfRightClass]?.probability ?? 0) * 100));
+			this.scheduleNextDecision(100);
+			return;
+		}
+
+		if (!this.decisionLoopRunning) {
+			return;
+		}
+
+		const { wiggleMin, wiggleMax } = this.getWiggleRange();
+
 		await this.setServoWiggle(
-			SorterPanel.WIGGLE_MIN,
-			SorterPanel.WIGGLE_MAX,
+			wiggleMin,
+			wiggleMax,
 			SorterPanel.WIGGLE_TIME_FOR_180_MS,
 		);
 		await this.sleep(SorterPanel.WIGGLE_DURATION_MS);
 
-		if (!this.decisionLoopRunning || !this.model || !this.webcam || !this.messageSender) {
+		if (!this.decisionLoopRunning || !this.model || !this.webcam || !this.messageSender || this.operationMode !== "sort") {
 			return;
 		}
 
-		await this.setServoPosition(SorterPanel.CENTER_POSITION, SorterPanel.CENTER_TIME_FOR_180_MS);
+		await this.setServoPosition(this.getCenterPosition(), SorterPanel.CENTER_TIME_FOR_180_MS);
 		await this.sleep(SorterPanel.CENTER_SETTLE_MS);
 
-		if (!this.decisionLoopRunning || !this.model || !this.webcam || !this.messageSender) {
+		if (!this.decisionLoopRunning || !this.model || !this.webcam || !this.messageSender || this.operationMode !== "sort") {
 			return;
 		}
 
@@ -147,20 +240,20 @@ export class SorterPanel extends LitElement {
 
 		if (targetClass === TargetClass.LEFT) {
 			await this.setLed(255, 0, 0);
-			await this.setServoPosition(SorterPanel.LEFT_DROP_POSITION, SorterPanel.DROP_TIME_FOR_180_MS);
+			await this.setServoPosition(this.getDropPosition(TargetClass.LEFT), SorterPanel.DROP_TIME_FOR_180_MS);
 			this.triggerDropAnimation(targetClass);
 			await this.sleep(SorterPanel.DROP_SETTLE_MS);
-			await this.setServoPosition(SorterPanel.CENTER_POSITION, SorterPanel.CENTER_TIME_FOR_180_MS);
+			await this.setServoPosition(this.getCenterPosition(), SorterPanel.CENTER_TIME_FOR_180_MS);
 			this.scheduleNextDecision(SorterPanel.DROP_SETTLE_MS);
 			return;
 		}
 
 		if (targetClass === TargetClass.RIGHT) {
 			await this.setLed(0, 255, 0);
-			await this.setServoPosition(SorterPanel.RIGHT_DROP_POSITION, SorterPanel.DROP_TIME_FOR_180_MS);
+			await this.setServoPosition(this.getDropPosition(TargetClass.RIGHT), SorterPanel.DROP_TIME_FOR_180_MS);
 			this.triggerDropAnimation(targetClass);
 			await this.sleep(SorterPanel.DROP_SETTLE_MS);
-			await this.setServoPosition(SorterPanel.CENTER_POSITION, SorterPanel.CENTER_TIME_FOR_180_MS);
+			await this.setServoPosition(this.getCenterPosition(), SorterPanel.CENTER_TIME_FOR_180_MS);
 			this.scheduleNextDecision(SorterPanel.DROP_SETTLE_MS);
 			return;
 		}
@@ -210,11 +303,7 @@ export class SorterPanel extends LitElement {
         // Note: the pose library adds "tmImage" object to your window (window.tmImage)
         this.model = await tmImage.load(modelURL, metadataURL);
 
-		this.decisionLoopRunning = false;
-		if (this.decisionLoopTimeout) {
-			clearTimeout(this.decisionLoopTimeout);
-			this.decisionLoopTimeout = undefined;
-		}
+		this.stopDecisionLoop();
 		this.leftClassPercent = 0;
 		this.rightClassPercent = 0;
 		this.labelContainerRef.value!.innerHTML = "";
@@ -225,9 +314,7 @@ export class SorterPanel extends LitElement {
 			this.model=null;
 			return;
 		}
-		this.statusMessage = "Model geladen";
-		this.decisionLoopRunning = true;
-		this.scheduleNextDecision(0);
+		await this.applyCurrentMode();
 	}
 
 	render() {
@@ -244,6 +331,37 @@ export class SorterPanel extends LitElement {
 						style=${!this.deviceConnected ? "opacity: 0.5; cursor: not-allowed;" : ""}
 					/>
 					<button ?disabled=${!this.deviceConnected} @click=${this.loadModel}>Model laden</button>
+				</div>
+
+				<div class="panel-row">
+					<label>
+						Modus
+						<select
+							class="panel-input"
+							@change=${this.onModeInput}
+							.value=${this.operationMode}
+							?disabled=${!this.deviceConnected}
+						>
+							<option value="sort">Sortieren</option>
+							<option value="training">Aus / Training</option>
+						</select>
+					</label>
+				</div>
+
+				<div class="panel-row">
+					<label style="display: flex; align-items: center; gap: 0.5rem; width: 100%;">
+						<span>Mittelpunkt-Kalibrierung: ${this.getCenterPosition()}</span>
+						<input
+							type="range"
+							min="0"
+							max="255"
+							step="1"
+							.value=${String(this.centerCalibration)}
+							@input=${this.onCenterCalibrationInput}
+							?disabled=${!this.deviceConnected}
+							style="flex: 1;"
+						/>
+					</label>
 				</div>
 
 				<div class="panel-text">${this.statusMessage}</div>
