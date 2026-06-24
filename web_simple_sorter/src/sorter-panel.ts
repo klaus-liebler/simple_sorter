@@ -16,8 +16,7 @@ type SorterOperationMode = "sort" | "training";
 
 @customElement("sorter-panel")
 export class SorterPanel extends LitElement {
-	//private static readonly DEFAULT_MODEL_URL = "https://teachablemachine.withgoogle.com/models/UWp0-4g0k/";
-	private static readonly DEFAULT_MODEL_URL = "https://teachablemachine.withgoogle.com/models/mCrofsz8f/";
+	private static readonly DEFAULT_MODEL_URL = "https://teachablemachine.withgoogle.com/models/PDJKM0gsS/";
 	private static readonly WIGGLE_DURATION_MS = 2000;
 	private static readonly WIGGLE_MIN = 80 * 255 / 180;
 	private static readonly WIGGLE_MAX = 100 * 255 / 180;
@@ -44,7 +43,7 @@ export class SorterPanel extends LitElement {
 	@state() private accessor leftClassPercent = 0;
 	@state() private accessor rightClassPercent = 0;
 	@state() private accessor lastDropSide: "left" | "right" | null = null;
-	@state() private accessor operationMode: SorterOperationMode = "sort";
+	@state() private accessor operationMode: SorterOperationMode = "training";
 	@state() private accessor centerCalibration = SorterPanel.DEFAULT_CENTER_POSITION;
 
 	private model:tmImage.CustomMobileNet|null=null;
@@ -69,6 +68,11 @@ export class SorterPanel extends LitElement {
 
 	private onModeInput(event: Event) {
 		const target = event.target as HTMLSelectElement;
+		if (target.value === "sort" && !this.model) {
+			this.operationMode = "training";
+			this.statusMessage = "Bitte erst ein Model laden";
+			return;
+		}
 		this.operationMode = target.value === "sort" ? "sort" : "training";
 		void this.applyCurrentMode();
 	}
@@ -77,6 +81,9 @@ export class SorterPanel extends LitElement {
 		const target = event.target as HTMLInputElement;
 		const parsed = Number.parseInt(target.value, 10);
 		this.centerCalibration = this.clampServoValue(Number.isNaN(parsed) ? SorterPanel.DEFAULT_CENTER_POSITION : parsed);
+		if (this.operationMode === "training") {
+			void this.setServoPosition(this.getCenterPosition(), SorterPanel.CENTER_TIME_FOR_180_MS);
+		}
 	}
 
 	private triggerDropAnimation(side: TargetClass) {
@@ -138,7 +145,7 @@ export class SorterPanel extends LitElement {
 	}
 
 	private async applyCurrentMode() {
-		if (!this.model || !this.webcam || !this.messageSender) {
+		if (!this.messageSender) {
 			return;
 		}
 
@@ -146,8 +153,18 @@ export class SorterPanel extends LitElement {
 			this.stopDecisionLoop();
 			await this.setLed(0, 0, 0);
 			await this.setServoPosition(this.getCenterPosition(), SorterPanel.CENTER_TIME_FOR_180_MS);
-			this.statusMessage = "Model geladen (Aus/Training)";
-			this.scheduleNextDecision(0);
+			this.statusMessage = this.model ? "Model geladen (Aus/Training)" : "Model nicht geladen (Aus/Training)";
+			if (this.model && this.webcam) {
+				this.scheduleNextDecision(0);
+			}
+			return;
+		}
+
+		if (!this.model || !this.webcam) {
+			this.operationMode = "training";
+			this.statusMessage = "Bitte erst ein Model laden";
+			await this.setLed(0, 0, 0);
+			await this.setServoPosition(this.getCenterPosition(), SorterPanel.CENTER_TIME_FOR_180_MS);
 			return;
 		}
 
@@ -313,8 +330,10 @@ export class SorterPanel extends LitElement {
 		if(this.indexOfLeftClass===-1 || this.indexOfRightClass===-1) {
 			this.statusMessage = "Das geladene Modell hat nicht die Klassen 'Links' und 'Rechts'";
 			this.model=null;
+			this.operationMode = "training";
 			return;
 		}
+		this.operationMode = "training";
 		await this.applyCurrentMode();
 	}
 
@@ -343,7 +362,7 @@ export class SorterPanel extends LitElement {
 							.value=${this.operationMode}
 							?disabled=${!this.deviceConnected}
 						>
-							<option value="sort">Sortieren</option>
+							<option value="sort" ?disabled=${!this.model}>Sortieren</option>
 							<option value="training">Aus / Training</option>
 						</select>
 					</label>
@@ -359,7 +378,7 @@ export class SorterPanel extends LitElement {
 							step="1"
 							.value=${String(this.centerCalibration)}
 							@input=${this.onCenterCalibrationInput}
-							?disabled=${!this.deviceConnected}
+							?disabled=${!this.deviceConnected || this.operationMode === "sort"}
 							style="flex: 1;"
 						/>
 					</label>
