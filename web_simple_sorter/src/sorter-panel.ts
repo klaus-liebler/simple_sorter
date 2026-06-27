@@ -21,8 +21,9 @@ type PredefinedModel = {
 
 @customElement("sorter-panel")
 export class SorterPanel extends LitElement {
-private static readonly DEFAULT_MODEL_URL = "https://teachablemachine.withgoogle.com/models/PDJKM0gsS/";
+	private static readonly DEFAULT_MODEL_URL = "https://teachablemachine.withgoogle.com/models/PDJKM0gsS/";
 	private static readonly HELP_VIDEO_URL = "https://youtu.be/W0RHdbnXww4";
+	private static readonly HELP_VIDEO_URL_STEP_1_AND_2 = "https://youtu.be/Ywrzp1CqoN8";
 	private static readonly TRAIN_MODEL_URL = "https://teachablemachine.withgoogle.com/train/image";
 	private static readonly PREDEFINED_MODELS: PredefinedModel[] = [
 		{ name: "Liebler 2026-06-27", url: "https://teachablemachine.withgoogle.com/models/cxtJc3Cun/" },
@@ -75,20 +76,13 @@ private static readonly DEFAULT_MODEL_URL = "https://teachablemachine.withgoogle
 		window.requestAnimationFrame(()=>{this.onAnimationFrame()});
 	}
 
+	private openHelpPage(url: string) {
+		window.open(url, "_blank", "noopener,noreferrer");
+	}
+
 	private onModelInput(event: Event) {
 		const target = event.target as HTMLInputElement;
 		this.modelUrl = target.value;
-	}
-
-private onModeInput(event: Event) {
-		const target = event.target as HTMLSelectElement;
-		if (target.value === "sort" && !this.model) {
-			this.operationMode = "training";
-			this.statusMessage = "Bitte erst ein Model laden";
-			return;
-		}
-		this.operationMode = target.value === "sort" ? "sort" : "training";
-		void this.applyCurrentMode();
 	}
 
 	private onCenterCalibrationInput(event: Event) {
@@ -98,6 +92,69 @@ private onModeInput(event: Event) {
 		this.centerCalibration = this.clampServoValue(255 - sliderValue);
 		this.applyCenterCalibrationPreview();
 	}
+
+	private async applyCenterCalibrationPreview() {
+		if (!this.messageSender || !this.deviceConnected || this.operationMode === "sort") {
+			return;
+		}
+		await this.setServoPosition(this.getCenterPosition(), SorterPanel.CENTER_TIME_FOR_180_MS);
+	}
+
+	private async onPredefinedPlay(event: Event) {
+		const target = event.currentTarget as HTMLElement | null;
+		const indexAttr = target?.getAttribute("data-model-index");
+		const index = Number.parseInt(indexAttr ?? "", 10);
+		if (Number.isNaN(index) || index < 0 || index >= SorterPanel.PREDEFINED_MODELS.length) {
+			return;
+		}
+		const predefinedModel = SorterPanel.PREDEFINED_MODELS[index];
+		if (!predefinedModel) {
+			return;
+		}
+
+		this.activePredefinedModelIndex = index;
+		this.activeCustomModel = false;
+		const loaded = await this.loadModelFromUrl(predefinedModel.url);
+		if (loaded) {
+			this.operationMode = "sort";
+			await this.applyCurrentMode();
+		} else {
+			this.activePredefinedModelIndex = null;
+		}
+	}
+
+	private async onPredefinedStop() {
+		await this.stopModel();
+	}
+
+	private async onCustomPlay() {
+		this.activePredefinedModelIndex = null;
+		this.activeCustomModel = true;
+		const loaded = await this.loadModelFromUrl(this.modelUrl);
+		if (loaded) {
+			this.operationMode = "sort";
+			await this.applyCurrentMode();
+		} else {
+			this.activeCustomModel = false;
+		}
+	}
+
+	private async onCustomStop() {
+		await this.stopModel();
+	}
+
+	private async stopModel() {
+		this.stopDecisionLoop();
+		this.model = null;
+		this.indexOfLeftClass = -1;
+		this.indexOfRightClass = -1;
+		this.leftClassPercent = 0;
+		this.rightClassPercent = 0;
+		this.lastDropSide = null;
+		this.activePredefinedModelIndex = null;
+		this.activeCustomModel = false;
+		this.operationMode = "training";
+		await this.applyCurrentMode();
 	}
 
 	private triggerDropAnimation(side: TargetClass) {
@@ -167,9 +224,10 @@ private onModeInput(event: Event) {
 			this.stopDecisionLoop();
 			await this.setLed(0, 0, 0);
 			await this.setServoPosition(this.getCenterPosition(), SorterPanel.CENTER_TIME_FOR_180_MS);
-this.statusMessage = this.model ? "Modell geladen (Aus/Training)" : "Modell nicht geladen (Aus/Training)";
-		if (this.model && this.webcam) {
-			this.scheduleNextDecision(0);
+			this.statusMessage = this.model ? "Modell geladen (Aus/Training)" : "Modell nicht geladen (Aus/Training)";
+			if (this.model && this.webcam) {
+				this.scheduleNextDecision(0);
+			}
 			return;
 		}
 
@@ -178,8 +236,6 @@ this.statusMessage = this.model ? "Modell geladen (Aus/Training)" : "Modell nich
 			this.statusMessage = "Bitte erst ein Model laden";
 			await this.setLed(0, 0, 0);
 			await this.setServoPosition(this.getCenterPosition(), SorterPanel.CENTER_TIME_FOR_180_MS);
-			return;
-		}
 			return;
 		}
 
@@ -389,29 +445,14 @@ this.statusMessage = this.model ? "Modell geladen (Aus/Training)" : "Modell nich
 				<div class="panel-section sorter-workflow-step">
 					<div class="sorter-workflow-header">
 						<div class="panel-label">0.) Baue den SimpleSorter zusammen und schließe ihn an.</div>
-						<button type="button" @click=${this.openHelpPage}>Hilfe</button>
+						<button type="button" @click=${() => this.openHelpPage(SorterPanel.HELP_VIDEO_URL)}>Hilfe</button>
 					</div>
 				</div>
-
-<div class="panel-row">
-				<label>
-					Modus
-					<select
-						class="panel-input"
-						@change=${this.onModeInput}
-						.value=${this.operationMode}
-						?disabled=${!this.deviceConnected}
-					>
-						<option value="sort" ?disabled=${!this.model}>Sortieren</option>
-						<option value="training">Aus / Training</option>
-					</select>
-				</label>
-			</div>
 
 			<div class="panel-section sorter-workflow-step">
 				<div class="sorter-workflow-header">
 					<div class="panel-label">1.) Kontrolliere das Kamerabild</div>
-					<button type="button" @click=${this.openHelpPage}>Hilfe</button>
+					<button type="button" @click=${() => this.openHelpPage(SorterPanel.HELP_VIDEO_URL_STEP_1_AND_2)}>Hilfe</button>
 				</div>
 				<div class="panel-text">Stelle sicher, dass die Kamera mittig durch die Öffnung blickt.</div>
 				<div class="sorter-webcam" ${ref(this.webcamContainerRef)}></div>
@@ -420,7 +461,7 @@ this.statusMessage = this.model ? "Modell geladen (Aus/Training)" : "Modell nich
 				<div class="panel-section sorter-workflow-step">
 					<div class="sorter-workflow-header">
 						<div class="panel-label">2.) Stelle die Mittelpunkt-Kalibrierung ein</div>
-						<button type="button" @click=${this.openHelpPage}>Hilfe</button>
+						<button type="button" @click=${() => this.openHelpPage(SorterPanel.HELP_VIDEO_URL_STEP_1_AND_2)}>Hilfe</button>
 					</div>
 					<div class="panel-text">Stelle den Regler so ein, dass die Sortierwanne in der Mitte steht.</div>
 					<label style="display: flex; align-items: center; gap: 0.5rem; width: 100%;">
@@ -441,7 +482,7 @@ this.statusMessage = this.model ? "Modell geladen (Aus/Training)" : "Modell nich
 				<div class="panel-section sorter-workflow-step">
 					<div class="sorter-workflow-header">
 						<div class="panel-label">3.) Wähle ein fertiges KI-Modell oder trainiere Dein eigenes Modell.</div>
-						<button type="button" @click=${this.openHelpPage}>Hilfe</button>
+						<button type="button" @click=${() => this.openHelpPage(SorterPanel.HELP_VIDEO_URL)}>Hilfe</button>
 					</div>
 					<div class="sorter-model-table-wrap">
 						<table class="sorter-model-table" aria-label="Vordefinierte KI-Modelle">
