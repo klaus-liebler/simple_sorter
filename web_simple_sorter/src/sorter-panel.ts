@@ -21,8 +21,7 @@ type PredefinedModel = {
 
 @customElement("sorter-panel")
 export class SorterPanel extends LitElement {
-	//private static readonly DEFAULT_MODEL_URL = "https://teachablemachine.withgoogle.com/models/UWp0-4g0k/";
-	private static readonly DEFAULT_MODEL_URL = "https://teachablemachine.withgoogle.com/models/mCrofsz8f/";
+private static readonly DEFAULT_MODEL_URL = "https://teachablemachine.withgoogle.com/models/PDJKM0gsS/";
 	private static readonly HELP_VIDEO_URL = "https://youtu.be/W0RHdbnXww4";
 	private static readonly TRAIN_MODEL_URL = "https://teachablemachine.withgoogle.com/train/image";
 	private static readonly PREDEFINED_MODELS: PredefinedModel[] = [
@@ -81,6 +80,17 @@ export class SorterPanel extends LitElement {
 		this.modelUrl = target.value;
 	}
 
+private onModeInput(event: Event) {
+		const target = event.target as HTMLSelectElement;
+		if (target.value === "sort" && !this.model) {
+			this.operationMode = "training";
+			this.statusMessage = "Bitte erst ein Model laden";
+			return;
+		}
+		this.operationMode = target.value === "sort" ? "sort" : "training";
+		void this.applyCurrentMode();
+	}
+
 	private onCenterCalibrationInput(event: Event) {
 		const target = event.target as HTMLInputElement;
 		const parsed = Number.parseInt(target.value, 10);
@@ -88,102 +98,6 @@ export class SorterPanel extends LitElement {
 		this.centerCalibration = this.clampServoValue(255 - sliderValue);
 		this.applyCenterCalibrationPreview();
 	}
-
-	private openHelpPage() {
-		window.open(SorterPanel.HELP_VIDEO_URL, "_blank", "noopener,noreferrer");
-	}
-
-	private parseModelIndexFromTarget(event: Event) {
-		const target = event.currentTarget as HTMLButtonElement;
-		const parsed = Number.parseInt(target.dataset.modelIndex ?? "-1", 10);
-		if (Number.isNaN(parsed) || parsed < 0 || parsed >= SorterPanel.PREDEFINED_MODELS.length) {
-			return null;
-		}
-		return parsed;
-	}
-
-	private async onPredefinedPlay(event: Event) {
-		if (this.isModelLoading || this.activePredefinedModelIndex !== null || this.activeCustomModel) {
-			return;
-		}
-
-		const modelIndex = this.parseModelIndexFromTarget(event);
-		if (modelIndex === null) {
-			return;
-		}
-
-		const model = SorterPanel.PREDEFINED_MODELS[modelIndex];
-		if (!model) {
-			return;
-		}
-
-		this.modelUrl = model.url;
-		const loaded = await this.loadModelFromUrl(model.url);
-		if (!loaded) {
-			this.activePredefinedModelIndex = null;
-			return;
-		}
-
-		this.activePredefinedModelIndex = modelIndex;
-		this.activeCustomModel = false;
-		this.operationMode = "sort";
-		await this.applyCurrentMode();
-	}
-
-	private async onPredefinedStop(event: Event) {
-		if (this.isModelLoading) {
-			return;
-		}
-
-		const modelIndex = this.parseModelIndexFromTarget(event);
-		if (modelIndex === null || this.activePredefinedModelIndex !== modelIndex) {
-			return;
-		}
-
-		this.activePredefinedModelIndex = null;
-		this.operationMode = "training";
-		if (this.model) {
-			await this.applyCurrentMode();
-			return;
-		}
-		this.statusMessage = "Aus / Training aktiv";
-	}
-
-	private async onCustomPlay() {
-		if (this.isModelLoading || this.activePredefinedModelIndex !== null || this.activeCustomModel) {
-			return;
-		}
-
-		const loaded = await this.loadModelFromUrl(this.modelUrl);
-		if (!loaded) {
-			return;
-		}
-
-		this.activePredefinedModelIndex = null;
-		this.activeCustomModel = true;
-		this.operationMode = "sort";
-		await this.applyCurrentMode();
-	}
-
-	private async onCustomStop() {
-		if (this.isModelLoading || !this.activeCustomModel) {
-			return;
-		}
-
-		this.activeCustomModel = false;
-		this.operationMode = "training";
-		if (this.model) {
-			await this.applyCurrentMode();
-			return;
-		}
-		this.statusMessage = "Aus / Training aktiv";
-	}
-
-	private applyCenterCalibrationPreview() {
-		if (!this.deviceConnected || !this.messageSender) {
-			return;
-		}
-		void this.setServoPosition(this.getCenterPosition(), SorterPanel.CENTER_TIME_FOR_180_MS);
 	}
 
 	private triggerDropAnimation(side: TargetClass) {
@@ -245,7 +159,7 @@ export class SorterPanel extends LitElement {
 	}
 
 	private async applyCurrentMode() {
-		if (!this.model || !this.webcam || !this.messageSender) {
+		if (!this.messageSender) {
 			return;
 		}
 
@@ -253,8 +167,19 @@ export class SorterPanel extends LitElement {
 			this.stopDecisionLoop();
 			await this.setLed(0, 0, 0);
 			await this.setServoPosition(this.getCenterPosition(), SorterPanel.CENTER_TIME_FOR_180_MS);
-			this.statusMessage = "Modell geladen (Aus/Training)";
+this.statusMessage = this.model ? "Modell geladen (Aus/Training)" : "Modell nicht geladen (Aus/Training)";
+		if (this.model && this.webcam) {
 			this.scheduleNextDecision(0);
+			return;
+		}
+
+		if (!this.model || !this.webcam) {
+			this.operationMode = "training";
+			this.statusMessage = "Bitte erst ein Model laden";
+			await this.setLed(0, 0, 0);
+			await this.setServoPosition(this.getCenterPosition(), SorterPanel.CENTER_TIME_FOR_180_MS);
+			return;
+		}
 			return;
 		}
 
@@ -414,33 +339,36 @@ export class SorterPanel extends LitElement {
 			const modelURL = normalizedUrl + "model.json";
 			const metadataURL = normalizedUrl + "metadata.json";
 
-			// load the model and metadata
-			// Refer to tmImage.loadFromFiles() in the API to support files from a file picker
-			// or files from your local hard drive
-			// Note: the pose library adds "tmImage" object to your window (window.tmImage)
-			this.model = await tmImage.load(modelURL, metadataURL);
+// load the model and metadata
+				// Refer to tmImage.loadFromFiles() in the API to support files from a file picker
+				// or files from your local hard drive
+				// Note: the pose library adds "tmImage" object to your window (window.tmImage)
+				this.model = await tmImage.load(modelURL, metadataURL);
 
-			this.stopDecisionLoop();
-			this.leftClassPercent = 0;
-			this.rightClassPercent = 0;
-			this.labelContainerRef.value!.innerHTML = "";
-			this.indexOfLeftClass=this.model.getClassLabels().indexOf("Links");
-			this.indexOfRightClass=this.model.getClassLabels().indexOf("Rechts");
-			if(this.indexOfLeftClass===-1 || this.indexOfRightClass===-1) {
-				this.statusMessage = "Das geladene Modell hat nicht die Klassen 'Links' und 'Rechts'";
-				this.model=null;
+				this.stopDecisionLoop();
+				this.leftClassPercent = 0;
+				this.rightClassPercent = 0;
+				this.labelContainerRef.value!.innerHTML = "";
+				this.indexOfLeftClass = this.model.getClassLabels().indexOf("Links");
+				this.indexOfRightClass = this.model.getClassLabels().indexOf("Rechts");
+				if (this.indexOfLeftClass === -1 || this.indexOfRightClass === -1) {
+					this.statusMessage = "Das geladene Modell hat nicht die Klassen 'Links' und 'Rechts'";
+					this.model = null;
+					this.operationMode = "training";
+					return false;
+				}
+
+				this.modelUrl = normalizedUrl;
+				this.operationMode = "training";
+				await this.applyCurrentMode();
+				return true;
+			} catch {
+				this.statusMessage = "Modell konnte nicht geladen werden";
+				this.model = null;
 				return false;
+			} finally {
+				this.isModelLoading = false;
 			}
-
-			this.modelUrl = normalizedUrl;
-			return true;
-		} catch {
-			this.statusMessage = "Modell konnte nicht geladen werden";
-			this.model = null;
-			return false;
-		} finally {
-			this.isModelLoading = false;
-		}
 	}
 
 	render() {
@@ -465,13 +393,28 @@ export class SorterPanel extends LitElement {
 					</div>
 				</div>
 
-				<div class="panel-section sorter-workflow-step">
-					<div class="sorter-workflow-header">
-						<div class="panel-label">1.) Kontrolliere das Kamerabild</div>
-						<button type="button" @click=${this.openHelpPage}>Hilfe</button>
-					</div>
-					<div class="panel-text">Stelle sicher, dass die Kamera mittig durch die Öffnung blickt.</div>
-					<div class="sorter-webcam" ${ref(this.webcamContainerRef)}></div>
+<div class="panel-row">
+				<label>
+					Modus
+					<select
+						class="panel-input"
+						@change=${this.onModeInput}
+						.value=${this.operationMode}
+						?disabled=${!this.deviceConnected}
+					>
+						<option value="sort" ?disabled=${!this.model}>Sortieren</option>
+						<option value="training">Aus / Training</option>
+					</select>
+				</label>
+			</div>
+
+			<div class="panel-section sorter-workflow-step">
+				<div class="sorter-workflow-header">
+					<div class="panel-label">1.) Kontrolliere das Kamerabild</div>
+					<button type="button" @click=${this.openHelpPage}>Hilfe</button>
+				</div>
+				<div class="panel-text">Stelle sicher, dass die Kamera mittig durch die Öffnung blickt.</div>
+				<div class="sorter-webcam" ${ref(this.webcamContainerRef)}></div>
 				</div>
 
 				<div class="panel-section sorter-workflow-step">
@@ -489,7 +432,7 @@ export class SorterPanel extends LitElement {
 							step="1"
 							.value=${String(255 - this.centerCalibration)}
 							@input=${this.onCenterCalibrationInput}
-							?disabled=${!this.deviceConnected}
+							?disabled=${!this.deviceConnected || this.operationMode === "sort"}
 							style="flex: 1;"
 						/>
 					</label>
