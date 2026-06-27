@@ -204,7 +204,7 @@ export class RgbColorWheelPanel extends LitElement {
 					</div>
 					<div class="panel-controls slider-container">
 						<div class="panel-value-row panel-label">
-							<span>Lightness</span>
+							<span>Helligkeit</span>
 							<span>${Math.round(this.lightness)}%</span>
 						</div>
 						<input

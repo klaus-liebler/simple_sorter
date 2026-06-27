@@ -8,7 +8,8 @@ export class ConnectPanel extends LitElement {
 	}
 
 	@property({ type: Boolean }) accessor deviceConnected = false;
-	@property() accessor statusMessage = "Not connected";
+	@property() accessor statusMessage = "Noch nicht verbunden. Bitte auf die Schaltfläche \"Verbinden\" klicken";
+	@property() accessor statusVariant: "warning" | "success" | "error" = "warning";
 
 	private handleConnect() {
 		this.dispatchEvent(new CustomEvent("request-device"));
@@ -22,11 +23,13 @@ export class ConnectPanel extends LitElement {
 		return html`
 			<div class="panel app-panel">
 				<div class="status">
-					<div class="status-label">Status</div>
+					<div class="status-label">Verbindungsstatus</div>
 					<div
-						class="status-text ${this.deviceConnected
-							? "device-connected"
-							: "device-disconnected"}"
+						class="status-text ${this.statusVariant === "success"
+							? "status-success"
+							: this.statusVariant === "error"
+								? "status-error"
+								: "status-warning"}"
 					>
 						${this.statusMessage}
 					</div>
@@ -37,14 +40,14 @@ export class ConnectPanel extends LitElement {
 						@click="${this.handleConnect}"
 						?hidden="${this.deviceConnected}"
 					>
-						Connect
+						Verbinden
 					</button>
 					<button
 						class="disconnect-btn"
 						@click="${this.handleDisconnect}"
 						?hidden="${!this.deviceConnected}"
 					>
-						Disconnect
+						Trennen
 					</button>
 				</div>
 			</div>

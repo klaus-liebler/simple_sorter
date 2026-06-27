@@ -27,7 +27,7 @@ my-app {
 }
 
 my-app .container {
-	max-width: 600px;
+	max-width: 800px;
 	margin: 0 auto;
 	padding: 20px;
 }
@@ -134,11 +134,15 @@ connect-panel .status-text {
 	color: var(--ui-color-text-primary);
 }
 
-connect-panel .status-text.device-connected {
+connect-panel .status-text.status-success {
 	color: #2ecc71;
 }
 
-connect-panel .status-text.device-disconnected {
+connect-panel .status-text.status-warning {
+	color: #d4a000;
+}
+
+connect-panel .status-text.status-error {
 	color: #e74c3c;
 }
 
@@ -295,6 +299,65 @@ sorter-panel .sorter-webcam canvas {
 	border-radius: var(--ui-radius-md);
 	border: 1px solid var(--ui-color-border-soft);
 	background: var(--ui-color-bg-subtle);
+}
+
+sorter-panel .sorter-workflow-step {
+	gap: 10px;
+}
+
+sorter-panel .sorter-workflow-header {
+	display: flex;
+	justify-content: space-between;
+	align-items: center;
+	gap: 12px;
+}
+
+sorter-panel .sorter-model-table-wrap {
+	width: 100%;
+	overflow-x: auto;
+}
+
+sorter-panel .sorter-model-table {
+	width: 100%;
+	border-collapse: collapse;
+	font-size: var(--ui-font-size-sm);
+	background: var(--ui-color-bg-surface);
+	border: 1px solid var(--ui-color-border-soft);
+	border-radius: var(--ui-radius-md);
+	overflow: hidden;
+}
+
+sorter-panel .sorter-model-table th,
+sorter-panel .sorter-model-table td {
+	text-align: left;
+	padding: 8px;
+	border-bottom: 1px solid var(--ui-color-border-soft);
+	vertical-align: middle;
+}
+
+sorter-panel .sorter-model-table tr:last-child td {
+	border-bottom: none;
+}
+
+sorter-panel .sorter-model-url-cell {
+	word-break: break-all;
+	color: var(--ui-color-text-muted);
+}
+
+sorter-panel .sorter-model-url-input {
+	width: 100%;
+}
+
+sorter-panel .sorter-model-actions {
+	display: flex;
+	gap: 6px;
+}
+
+sorter-panel .sorter-action-btn {
+	min-width: 36px;
+	height: 32px;
+	padding: 0;
+	line-height: 1;
 }
 
 sorter-panel .sorter-labels {
