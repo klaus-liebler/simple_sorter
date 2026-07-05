@@ -21,7 +21,7 @@ export class ConnectPanel extends LitElement {
 
 	render() {
 		return html`
-			<div class="panel app-panel">
+			<div class="panel">
 				<div class="status">
 					<div class="status-label">Verbindungsstatus</div>
 					<div

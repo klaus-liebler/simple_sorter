@@ -31,13 +31,22 @@
 #include "listener/rgb_message_processor.hh"
 #include "listener/servo_message_processor.hh"
 #include "usb_descriptors.h"
-
 #define URL "liebler.iui.hs-osnabrueck.de/simplesorter/"
+#define ESP32_S3_SUPERMINI
+#if defined(ESP32_S3_ZERO)
+constexpr gpio_num_t LED_PIN{GPIO_NUM_21};
+constexpr gpio_num_t SERVO_PIN{GPIO_NUM_6};
+#elif defined(ESP32_S3_SUPERMINI)
+constexpr gpio_num_t LED_PIN{GPIO_NUM_48};
+constexpr gpio_num_t SERVO_PIN{GPIO_NUM_8};
+#else
+#error "Unsupported board"
+#endif
+
 constexpr char MONITOR_LOG_TAG[] = "monitor";
 constexpr gpio_num_t BUTTON_PIN{GPIO_NUM_0};
 constexpr int BUTTON_STATE_ACTIVE{0};
-constexpr gpio_num_t LED_PIN{GPIO_NUM_21};
-constexpr gpio_num_t SERVO_PIN{GPIO_NUM_6};
+
 constexpr TickType_t CDC_LOG_WRITE_TIMEOUT_TICKS = pdMS_TO_TICKS(20);
 constexpr uint32_t BINARY_MSG_SIZE = 64;
 constexpr uint16_t BINARY_PAYLOAD_SIZE = 60;
@@ -176,7 +185,7 @@ extern "C" void app_main(void)
 
   s_sendBack = new VendorSendBack();
 
-  s_board_led.Begin(SPI2_HOST, GPIO_NUM_21);
+  s_board_led.Begin(SPI2_HOST, LED_PIN);
 
   for (auto *processor : message_processors)
   {

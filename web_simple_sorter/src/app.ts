@@ -15,7 +15,7 @@ export interface IMessageSender {
 @customElement("my-app")
 export class Application extends LitElement {
 	private static readonly STATUS_NOT_CONNECTED = "Noch nicht verbunden. Bitte auf die Schaltfläche \"Verbinden\" klicken";
-	private static readonly STATUS_CONNECTED = "Verbindung erfolgreich hergestellt";
+	private static readonly STATUS_CONNECTED = "SimpleSorter verbunden";
 	private static readonly STATUS_PROBLEM = "Verbindungsproblem! Hole Dir gerne Hilfe!";
 
 	protected createRenderRoot() {
@@ -69,12 +69,10 @@ export class Application extends LitElement {
 	render() {
 		return html`
 			<div class="container">
-				<section class="logo-section">
+				<section class="header-section app-panel header-combined-panel">
 					<div class="hsos-logo" aria-label="HSOS-Logo">${unsafeHTML(hsos_logo)}</div>
-				</section>
-
-				<section class="header-section">
 					<connect-panel
+						class="header-connect-panel"
 						.deviceConnected=${this.deviceConnected}
 						.statusVariant=${this.statusVariant}
 						.statusMessage="${this.statusMessage}"

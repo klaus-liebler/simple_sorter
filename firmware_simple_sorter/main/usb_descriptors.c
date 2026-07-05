@@ -51,10 +51,10 @@ const char *g_usb_string_descriptor[] =
 {
   (const char[]){0x09, 0x04},
   "Klaus Liebler, HS Osnabrueck",
-  "AISorter",
+  "SimpleSorter",
   s_serial_number,
-  "AISorter CDC",
-  "AISorter WebUSB",
+  "SimpleSorter CDC",
+  "SimpleSorter WebUSB",
 };
 
 const int g_usb_string_descriptor_count = sizeof(g_usb_string_descriptor) / sizeof(g_usb_string_descriptor[0]);

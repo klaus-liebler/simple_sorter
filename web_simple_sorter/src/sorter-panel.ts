@@ -2,6 +2,7 @@ import { LitElement, html } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import { createRef, ref } from "lit-html/directives/ref.js";
 import type { Ref } from "lit-html/directives/ref.js";
+import type { PropertyValues } from "lit";
 import type { IMessageSender } from "./app.js";
 import * as tmImage from "@teachablemachine/image";
 
@@ -27,7 +28,7 @@ export class SorterPanel extends LitElement {
 	private static readonly TRAIN_MODEL_URL = "https://teachablemachine.withgoogle.com/train/image";
 	private static readonly PREDEFINED_MODELS: PredefinedModel[] = [
 		{ name: "Liebler 2026-06-27", url: "https://teachablemachine.withgoogle.com/models/cxtJc3Cun/" },
-		{ name: "Demo-Modell", url: "https://teachablemachine.withgoogle.com/models/UWp0-4g0k/" },
+		{ name: "Liebler 2026-06-28", url: "https://teachablemachine.withgoogle.com/models/E0uGzqk6m/" },
 	];
 	private static readonly WIGGLE_DURATION_MS = 2000;
 	private static readonly WIGGLE_MIN = 80 * 255 / 180;
@@ -56,7 +57,7 @@ export class SorterPanel extends LitElement {
 	@state() private accessor rightClassPercent = 0;
 	@state() private accessor lastDropSide: "left" | "right" | null = null;
 	@state() private accessor operationMode: SorterOperationMode = "training";
-	@state() private accessor centerCalibration = SorterPanel.DEFAULT_CENTER_POSITION;
+	@state() private accessor centerCalibration = 127;
 	@state() private accessor activePredefinedModelIndex: number | null = null;
 	@state() private accessor activeCustomModel = false;
 	@state() private accessor isModelLoading = false;
@@ -74,6 +75,16 @@ export class SorterPanel extends LitElement {
 	firstUpdated() {
 		this.ensureWebcamStarted();
 		window.requestAnimationFrame(()=>{this.onAnimationFrame()});
+	}
+
+	protected updated(changedProperties: PropertyValues<this>) {
+		if (
+			(changedProperties.has("deviceConnected") || changedProperties.has("messageSender")) &&
+			this.deviceConnected &&
+			this.messageSender
+		) {
+			void this.applyCenterCalibrationPreview();
+		}
 	}
 
 	private openHelpPage(url: string) {
@@ -441,47 +452,65 @@ export class SorterPanel extends LitElement {
 			!this.modelUrl.trim();
 		const customStopDisabled = !this.deviceConnected || this.isModelLoading || !this.activeCustomModel;
 		return html`
-			<div class="panel app-panel">
-				<div class="panel-section sorter-workflow-step">
-					<div class="sorter-workflow-header">
-						<div class="panel-label">0.) Baue den SimpleSorter zusammen und schließe ihn an.</div>
-						<button type="button" @click=${() => this.openHelpPage(SorterPanel.HELP_VIDEO_URL)}>Hilfe</button>
+			<div class="panel app-panel sorter-panel-layout">
+				<div class="sorter-main-row">
+					<div class="panel-section sorter-workflow-step sorter-webcam-section">
+						<div class="panel-label">Kamerabild</div>
+						<div class="sorter-webcam" ${ref(this.webcamContainerRef)}></div>
 					</div>
-				</div>
 
-			<div class="panel-section sorter-workflow-step">
-				<div class="sorter-workflow-header">
-					<div class="panel-label">1.) Kontrolliere das Kamerabild</div>
-					<button type="button" @click=${() => this.openHelpPage(SorterPanel.HELP_VIDEO_URL_STEP_1_AND_2)}>Hilfe</button>
-				</div>
-				<div class="panel-text">Stelle sicher, dass die Kamera mittig durch die Öffnung blickt.</div>
-				<div class="sorter-webcam" ${ref(this.webcamContainerRef)}></div>
-				</div>
-
-				<div class="panel-section sorter-workflow-step">
-					<div class="sorter-workflow-header">
-						<div class="panel-label">2.) Stelle die Mittelpunkt-Kalibrierung ein</div>
-						<button type="button" @click=${() => this.openHelpPage(SorterPanel.HELP_VIDEO_URL_STEP_1_AND_2)}>Hilfe</button>
-					</div>
-					<div class="panel-text">Stelle den Regler so ein, dass die Sortierwanne in der Mitte steht.</div>
-					<label style="display: flex; align-items: center; gap: 0.5rem; width: 100%;">
-						<span>Mittelpunkt-Kalibrierung</span>
+					<div class="panel-section sorter-workflow-step sorter-live-section">
+						<div class="panel-label">Status</div>
+						<div class="panel-text">${this.statusMessage}</div>
+						<div class="panel-label">Mittelpunkt-Kalibrierung</div>
 						<input
 							type="range"
+							class="panel-slider"
 							min="0"
 							max="255"
 							step="1"
 							.value=${String(255 - this.centerCalibration)}
 							@input=${this.onCenterCalibrationInput}
 							?disabled=${!this.deviceConnected || this.operationMode === "sort"}
-							style="flex: 1;"
 						/>
-					</label>
+						<div class="sorter-prediction-row">
+							<div class=${`sorter-drop-indicator sorter-drop-indicator-left ${this.lastDropSide === "left" ? "sorter-drop-indicator-fired" : ""}`}>
+								ABWURF
+							</div>
+							<div
+								class=${`sorter-prediction-bars ${this.lastDropSide === "left" ? "sorter-prediction-bars-left-fired" : ""} ${this.lastDropSide === "right" ? "sorter-prediction-bars-right-fired" : ""}`}
+								aria-label="Klassen-Wahrscheinlichkeiten"
+							>
+								<div class="sorter-prediction-half sorter-prediction-half-left">
+									<div
+										class="sorter-prediction-fill sorter-prediction-fill-left"
+										style=${`width: ${this.leftClassPercent}%;`}
+									></div>
+								</div>
+								<div class="sorter-prediction-center-line"></div>
+								<div class="sorter-prediction-half sorter-prediction-half-right">
+									<div
+										class="sorter-prediction-fill sorter-prediction-fill-right"
+										style=${`width: ${this.rightClassPercent}%;`}
+									></div>
+								</div>
+							</div>
+							<div
+								class=${`sorter-drop-indicator sorter-drop-indicator-right ${this.lastDropSide === "right" ? "sorter-drop-indicator-fired" : ""}`}
+							>
+								ABWURF
+							</div>
+						</div>
+						<div class="sorter-prediction-values panel-text">
+							<span>Links (Klasse 0): ${this.leftClassPercent.toFixed(0)}%</span>
+							<span>Rechts (Klasse 1): ${this.rightClassPercent.toFixed(0)}%</span>
+						</div>
+					</div>
 				</div>
 
 				<div class="panel-section sorter-workflow-step">
 					<div class="sorter-workflow-header">
-						<div class="panel-label">3.) Wähle ein fertiges KI-Modell oder trainiere Dein eigenes Modell.</div>
+						<div class="panel-label">Modellauswahl</div>
 						<button type="button" @click=${() => this.openHelpPage(SorterPanel.HELP_VIDEO_URL)}>Hilfe</button>
 					</div>
 					<div class="sorter-model-table-wrap">
@@ -567,41 +596,6 @@ export class SorterPanel extends LitElement {
 							</tbody>
 						</table>
 					</div>
-				</div>
-
-				<div class="panel-text">${this.statusMessage}</div>
-
-				<div class="sorter-prediction-row">
-					<div class=${`sorter-drop-indicator sorter-drop-indicator-left ${this.lastDropSide === "left" ? "sorter-drop-indicator-fired" : ""}`}>
-						ABWURF
-					</div>
-					<div
-						class=${`sorter-prediction-bars ${this.lastDropSide === "left" ? "sorter-prediction-bars-left-fired" : ""} ${this.lastDropSide === "right" ? "sorter-prediction-bars-right-fired" : ""}`}
-						aria-label="Klassen-Wahrscheinlichkeiten"
-					>
-						<div class="sorter-prediction-half sorter-prediction-half-left">
-							<div
-								class="sorter-prediction-fill sorter-prediction-fill-left"
-								style=${`width: ${this.leftClassPercent}%;`}
-							></div>
-						</div>
-						<div class="sorter-prediction-center-line"></div>
-						<div class="sorter-prediction-half sorter-prediction-half-right">
-							<div
-								class="sorter-prediction-fill sorter-prediction-fill-right"
-								style=${`width: ${this.rightClassPercent}%;`}
-							></div>
-						</div>
-					</div>
-					<div
-						class=${`sorter-drop-indicator sorter-drop-indicator-right ${this.lastDropSide === "right" ? "sorter-drop-indicator-fired" : ""}`}
-					>
-						ABWURF
-					</div>
-				</div>
-				<div class="sorter-prediction-values panel-text">
-					<span>Links (Klasse 0): ${this.leftClassPercent.toFixed(0)}%</span>
-					<span>Rechts (Klasse 1): ${this.rightClassPercent.toFixed(0)}%</span>
 				</div>
 
 				<div class="sorter-labels" ${ref(this.labelContainerRef)}></div>
