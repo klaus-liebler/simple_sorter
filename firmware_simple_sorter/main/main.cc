@@ -119,7 +119,8 @@ static const webusb_url_desc_t desc_url = {
     .bLength = static_cast<uint8_t>(3 + sizeof(URL) - 1),
     .bDescriptorType = 3, // WEBUSB URL type
     .bScheme = 1,         // 0: http, 1: https
-    .url = URL};
+    .url = URL
+  };
 
 static std::array<IMessageProcessor *, 3> message_processors{
     new listener::EchoMessageProcessor(),
