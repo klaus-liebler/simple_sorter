@@ -27,8 +27,7 @@ export class SorterPanel extends LitElement {
 	private static readonly HELP_VIDEO_URL_STEP_1_AND_2 = "https://youtu.be/Ywrzp1CqoN8";
 	private static readonly TRAIN_MODEL_URL = "https://teachablemachine.withgoogle.com/train/image";
 	private static readonly PREDEFINED_MODELS: PredefinedModel[] = [
-		{ name: "Liebler 2026-06-27", url: "https://teachablemachine.withgoogle.com/models/cxtJc3Cun/" },
-		{ name: "Liebler 2026-06-28", url: "https://teachablemachine.withgoogle.com/models/E0uGzqk6m/" },
+		{ name: "BlackBody - red/green", url: "https://teachablemachine.withgoogle.com/models/-yjcqHvap/" },
 	];
 	private static readonly WIGGLE_DURATION_MS = 2000;
 	private static readonly WIGGLE_MIN = 80 * 255 / 180;
