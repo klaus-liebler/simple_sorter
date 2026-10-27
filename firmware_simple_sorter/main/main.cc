@@ -3,6 +3,7 @@
 #include <string.h>
 #include <errno.h>
 #include <stdarg.h>
+#include <array>
 #include <fcntl.h>
 #include <sys/types.h>
 #include <unistd.h>
@@ -14,7 +15,7 @@
 #include "esp_vfs.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-#include "rgbled.hh"
+#include "rgb_strip.hh"
 #include "esp_rom_gpio.h"
 
 #include "hal/gpio_ll.h"
@@ -93,17 +94,7 @@ bool board_button_pressed(void)
   return gpio_get_level(BUTTON_PIN) == BUTTON_STATE_ACTIVE;
 }
 
-/* Blink pattern
- * - 250 ms  : device not mounted
- * - 1000 ms : device mounted
- * - 2500 ms : device is suspended
- */
-RGBLED::BlinkPattern NOT_MOUNTED(CRGB::Red, 250, CRGB::Black, 250);
-RGBLED::BlinkPattern MOUNTED(CRGB::Green, 1000, CRGB::Black, 1000);
-RGBLED::BlinkPattern SUSPENDED(CRGB::Blue, 250, CRGB::Black, 2250);
-RGBLED::MultipleFlashesPattern USB_INIT_FAILED(CRGB::Red, 2);
-
-RGBLED::M<1, RGBLED::DeviceType::WS2812> s_board_led;
+led::RgbStrip<1, led::DeviceType::WS2812> s_board_led;
 ISendBackInterface *s_sendBack;
 int (*s_previous_log_vprintf)(const char *, va_list) = nullptr;
 
@@ -331,5 +322,3 @@ extern "C" void tud_vendor_rx_cb(uint8_t idx, const uint8_t *buffer, uint16_t bu
     }
   }
 }
-
-

@@ -2,7 +2,7 @@
 
 namespace listener {
 
-RGBMessageProcessor::RGBMessageProcessor(RGBLED::M<1, RGBLED::DeviceType::WS2812>& board_led)
+RGBMessageProcessor::RGBMessageProcessor(led::RgbStrip<1, led::DeviceType::WS2812>& board_led)
   : board_led_(board_led) {
 }
 

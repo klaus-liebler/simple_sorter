@@ -55,6 +55,30 @@ dependencies:
     - esp32h4
     - esp32s31
     version: 0.19.0~3
+  espressif/w5500:
+    component_hash: f76a95ce7a6029cf93aa39d47067588b24263852031f11c71e5d192ad915ec07
+    dependencies:
+    - name: espressif/wiznet_common
+      registry_url: https://components.espressif.com
+      require: private
+      version: ^1.1.0
+    - name: idf
+      require: private
+      version: '>=6.0'
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    version: 2.0.1
+  espressif/wiznet_common:
+    component_hash: c32814cb872f0dca09f0c97ab231f9264a65bacc13fab6baf65f71959269a73d
+    dependencies:
+    - name: idf
+      require: private
+      version: '>=5.3'
+    source:
+      registry_url: https://components.espressif.com
+      type: service
+    version: 1.1.0
   idf:
     source:
       type: idf
@@ -64,7 +88,8 @@ direct_dependencies:
 - espressif/esp_tinyusb
 - espressif/onewire_bus
 - espressif/tinyusb
+- espressif/w5500
 - idf
-manifest_hash: 835f36f1f1076ac56b7acdc6682265a73cce74469f97f124e5a300f0212d2f1c
+manifest_hash: c6c92d705443dcd3262c1966a890d2d527ddb5a539ef0a11ede04b8a876887e2
 target: esp32s3
 version: 3.0.0
