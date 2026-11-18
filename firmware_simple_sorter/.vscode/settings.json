@@ -14,5 +14,6 @@
     "--compile-commands-dir=c:\\repos\\simple_sorter\\firmware_simple_sorter\\build"
   ],
   "idf.portWin": "COM43",
-  "idf.flashType": "UART"
+  "idf.flashType": "UART",
+  "idf.port": "COM4"
 }
